@@ -1,0 +1,383 @@
+C++ Interview Syllabus
+
+
+1. C++ Fundamentals
+    - Compilation Model
+        - Preprocessor → Compiler → Assembler → Linker (the four stages)
+        - Translation Units (one .cpp + all its #includes = one TU)
+        - Header files vs source files (declaration vs definition)
+        - One Definition Rule (ODR) — exactly one definition per TU for functions/variables
+        - #include guards vs #pragma once
+    - Basic Types & Type System
+        - Fundamental types: int, char, float, double, bool, void
+        - Fixed-width integers: int32_t, uint64_t, etc. (<cstdint>)
+        - Implicit conversions & narrowing (int → char data loss)
+        - auto type deduction (C++11)
+        - Type aliases: typedef vs using (prefer using)
+    - Variables & Storage
+        - Storage duration: automatic, static, dynamic, thread_local
+        - Initialization: default, value, direct, copy, list (brace) initialization
+        - Most Vexing Parse: Widget w(); is a function declaration, not an object
+        - static variables (function-local, file-scope, class members)
+    - Control Flow
+        - if with initializer (C++17): if (auto it = m.find(k); it != m.end())
+        - Range-based for loop (C++11)
+        - Structured bindings (C++17): auto [key, value] = pair;
+    - Namespaces
+        - Named namespaces, unnamed/anonymous namespaces (internal linkage)
+        - using vs using namespace (avoid using namespace std)
+        - Argument-Dependent Lookup (ADL / Koenig Lookup)
+
+2. Pointers & References
+    - Raw Pointers
+        - Pointer arithmetic (ptr + n, ptr - ptr)
+        - void* (type-erased pointer, no arithmetic)
+        - Function pointers (void (*fp)(int))
+        - Pointer-to-member (int MyClass::*pm)
+    - References
+        - Lvalue references (T&) — must bind to lvalue, cannot rebind
+        - Const references (const T&) — can bind to rvalues (lifetime extension)
+        - Rvalue references (T&&) — C++11, binds to temporaries
+        - Dangling references (returning reference to local)
+    - nullptr
+        - Why nullptr over NULL or 0 (type safety: std::nullptr_t)
+    - Arrays & Pointer Decay
+        - Array-to-pointer decay (int arr[5] decays to int*)
+        - sizeof(array) vs sizeof(pointer) — common interview trap
+
+3. Memory Management & RAII
+    - Stack vs Heap
+        - Stack: automatic, fast, limited size (~1-8MB default)
+        - Heap: manual via new/delete, slower, unlimited
+        - Stack overflow (deep recursion, large locals)
+    - new / delete / new[] / delete[]
+        - Mismatch bug: new[] with delete (undefined behavior)
+        - Placement new (construct in pre-allocated memory)
+    - RAII (Resource Acquisition Is Initialization)
+        - Deterministic destruction (stack unwinding)
+        - Constructor acquires, Destructor releases
+        - The foundation of exception-safe C++
+    - Smart Pointers (C++11)
+        - std::unique_ptr — exclusive ownership, zero overhead, move-only
+        - std::shared_ptr — reference-counted, thread-safe refcount, control block overhead
+        - std::weak_ptr — breaks circular references, lock() to observe
+        - std::make_unique (C++14) / std::make_shared — exception safety, single allocation
+        - Custom deleters (std::unique_ptr<FILE, decltype(&fclose)>)
+    - Memory Leaks & Tools
+        - Valgrind, AddressSanitizer (ASan), MemorySanitizer (MSan)
+        - LeakSanitizer (LSan)
+
+4. Object-Oriented Programming & Polymorphism
+    - Classes & Access Control
+        - struct vs class (default access: public vs private)
+        - Access specifiers: public, protected, private
+        - friend functions and classes
+    - Constructors & Destructors
+        - Default, parameterized, copy, move constructors
+        - Delegating constructors (C++11)
+        - Member Initializer Lists (order matches declaration order, not list order)
+        - Explicit constructors (prevent implicit conversions)
+        - Rule of Zero / Rule of Three / Rule of Five
+    - Inheritance
+        - Public, protected, private inheritance
+        - Virtual functions & dynamic dispatch (vtable mechanism)
+        - Pure virtual functions (= 0) → abstract classes
+        - Virtual destructors (MUST for polymorphic base classes)
+        - override keyword (C++11) — compile-time check
+        - final keyword (C++11) — prevent further override/inheritance
+    - Multiple Inheritance & Diamond Problem
+        - Virtual inheritance (class B : virtual public A)
+        - The diamond problem and how virtual inheritance solves it
+    - CRTP (Curiously Recurring Template Pattern)
+        - Static polymorphism (no vtable overhead)
+    - Object Slicing
+        - What happens when derived is copied into base by value
+
+5. Templates & Metaprogramming
+    - Function Templates
+        - Template argument deduction
+        - Explicit specialization
+    - Class Templates
+        - Partial specialization vs full specialization
+        - Template template parameters
+    - Variadic Templates (C++11)
+        - Parameter packs (...), fold expressions (C++17)
+        - sizeof...() for pack size
+    - SFINAE (Substitution Failure Is Not An Error)
+        - std::enable_if, std::void_t
+        - Constraining template parameters
+    - Type Traits (<type_traits>)
+        - std::is_same, std::is_integral, std::decay, std::remove_reference
+        - std::conditional, std::is_base_of
+    - Concepts (C++20)
+        - requires clauses, concept definitions
+        - Replacing SFINAE with readable constraints
+    - constexpr & Compile-Time Computation
+        - constexpr functions (C++11, relaxed in C++14/C++20)
+        - consteval (C++20) — guaranteed compile-time evaluation
+        - constinit (C++20) — compile-time initialization, runtime use
+    - Template Metaprogramming
+        - Compile-time recursion (factorial, Fibonacci)
+        - Tag dispatch
+
+6. Move Semantics & Value Categories
+    - Value Categories
+        - lvalue (has identity, cannot be moved from implicitly)
+        - prvalue (pure rvalue — temporary, no identity)
+        - xvalue (expiring value — std::move result)
+        - glvalue = lvalue | xvalue, rvalue = prvalue | xvalue
+    - Move Constructor & Move Assignment
+        - When are they generated? (Rule of Five)
+        - noexcept on move operations (critical for std::vector reallocation)
+        - Moved-from state (valid but unspecified)
+    - std::move
+        - It's just a cast to T&& — it doesn't move anything
+        - When NOT to use std::move (on return values — prevents RVO)
+    - Perfect Forwarding
+        - Forwarding references (T&& in template context)
+        - std::forward<T>(arg) — preserves value category
+        - Universal reference vs rvalue reference (context matters)
+    - Copy Elision & RVO/NRVO
+        - Mandatory copy elision (C++17) for prvalues
+        - Named Return Value Optimization (NRVO) — optional, not guaranteed
+    - Reference Collapsing Rules
+        - T& & → T&, T& && → T&, T&& & → T&, T&& && → T&&
+
+7. STL Containers & Iterators
+    - Sequence Containers
+        - std::vector — contiguous, amortized O(1) push_back, cache-friendly
+        - std::deque — double-ended, O(1) front/back insert
+        - std::list — doubly-linked, O(1) splice, poor cache locality
+        - std::array — fixed-size, stack-allocated, zero overhead
+        - std::forward_list — singly-linked
+    - Associative Containers
+        - std::map / std::set — red-black tree, O(log n) operations, sorted
+        - std::multimap / std::multiset — allows duplicate keys
+    - Unordered Containers
+        - std::unordered_map / std::unordered_set — hash table, O(1) average
+        - Hash function requirements, bucket interface
+        - When map is faster than unordered_map (small n, poor hash)
+    - Container Adaptors
+        - std::stack, std::queue, std::priority_queue
+    - Iterator Categories
+        - Input, Output, Forward, Bidirectional, Random Access, Contiguous (C++20)
+    - Iterator Invalidation Rules
+        - vector: insert/push_back may invalidate ALL; erase invalidates from point onward
+        - map/set: insert never invalidates; erase only invalidates erased
+        - deque: insert at front/back may invalidate iterators but not references
+    - std::span (C++20) — non-owning view over contiguous data
+
+8. STL Algorithms & Utilities
+    - Algorithms (<algorithm>)
+        - std::sort, std::stable_sort, std::partial_sort
+        - std::find, std::find_if, std::binary_search, std::lower_bound
+        - std::transform, std::accumulate, std::reduce (C++17)
+        - std::remove / std::remove_if + erase idiom
+        - std::partition, std::nth_element
+    - Ranges (C++20)
+        - Views: filter, transform, take, drop — lazy evaluation
+        - Pipe syntax: vec | views::filter(pred) | views::transform(fn)
+    - Utilities
+        - std::pair, std::tuple, std::optional (C++17), std::variant (C++17)
+        - std::any (C++17), std::string_view (C++17)
+        - std::expected (C++23)
+
+9. Lambda Expressions
+    - Syntax & Captures (C++11)
+        - Capture by value [=], by reference [&], mixed [x, &y]
+        - Capture this vs capture *this (C++17 — copy of object)
+    - Mutable Lambdas
+        - By default, operator() is const — mutable keyword overrides
+    - Generic Lambdas (C++14)
+        - auto parameters → implicitly templated
+    - Lambda as std::function vs Template Parameter
+        - std::function: type-erased, heap allocation, virtual dispatch
+        - Template parameter: zero overhead, inline-able, but no type erasure
+    - Init Captures (C++14)
+        - [ptr = std::move(uptr)] — move into lambda
+    - Immediately Invoked Lambda Expression (IILE)
+        - const auto x = [&]{ /* complex init */ return val; }();
+    - Constexpr Lambdas (C++17)
+    - Template Lambdas (C++20)
+        - []<typename T>(T x) { ... }
+
+10. Const Correctness & Type Casting
+    - const
+        - const variables, const references, const pointers (read right to left)
+        - const member functions (promise not to modify *this)
+        - const overloading (const and non-const versions of same method)
+    - constexpr vs const
+        - constexpr: evaluated at compile time (can be)
+        - const: immutable at runtime (may or may not be compile-time)
+    - volatile
+        - Prevents compiler optimization of reads/writes
+        - NOT for multithreading (use std::atomic)
+    - mutable
+        - Allows modification in const member functions (e.g., caching, mutex)
+    - Type Casting
+        - static_cast: safe compile-time cast (numeric, up/down hierarchy)
+        - dynamic_cast: runtime checked downcast (requires virtual, returns nullptr/throws)
+        - const_cast: add/remove const (undefined if original was truly const)
+        - reinterpret_cast: bit-pattern reinterpretation (dangerous, implementation-defined)
+        - C-style cast: tries static, const, reinterpret in order (avoid)
+
+11. Concurrency & Multithreading
+    - Thread Management
+        - std::thread creation, join, detach
+        - std::jthread (C++20) — auto-joining, cooperative cancellation
+    - Mutexes & Locks
+        - std::mutex, std::recursive_mutex, std::timed_mutex
+        - std::lock_guard (RAII, scoped)
+        - std::unique_lock (deferred locking, movable)
+        - std::scoped_lock (C++17) — deadlock-free multi-mutex lock
+        - std::shared_mutex / std::shared_lock (C++17) — reader-writer lock
+    - Condition Variables
+        - std::condition_variable — wait, notify_one, notify_all
+        - Spurious wakeups (always use predicate in wait)
+    - Atomics
+        - std::atomic<T> — lock-free operations
+        - Memory orderings: relaxed, acquire, release, seq_cst
+        - std::atomic_flag — guaranteed lock-free, spinlock building block
+    - Async & Futures
+        - std::async, std::future, std::promise
+        - std::packaged_task
+        - Launch policies: std::launch::async vs std::launch::deferred
+    - Memory Model (C++11)
+        - Sequential consistency
+        - Happens-before relationship
+        - Data races = undefined behavior
+    - Common Problems
+        - Deadlocks (lock ordering), Livelocks, Priority inversion
+        - Race conditions, TOCTOU bugs
+        - Thread sanitizer (TSan)
+
+12. Exception Handling
+    - try / catch / throw
+        - Catch by reference (catch (const std::exception& e))
+        - Re-throwing (throw; vs throw e; — slicing risk)
+        - Exception specifications: noexcept (C++11), throw() deprecated
+    - noexcept
+        - noexcept specifier and noexcept operator
+        - Critical for move operations (vector reallocation uses move only if noexcept)
+        - noexcept(false) — explicitly non-noexcept
+    - Exception Safety Guarantees
+        - No-throw guarantee (noexcept)
+        - Strong guarantee (commit or rollback — copy-and-swap idiom)
+        - Basic guarantee (invariants preserved, no leaks)
+        - No guarantee (avoid)
+    - Stack Unwinding
+        - Destructors called in reverse order
+        - Throwing in destructors (std::terminate if during stack unwinding)
+    - Custom Exception Hierarchies
+        - Inherit from std::exception or std::runtime_error
+
+13. Strings & I/O
+    - std::string
+        - Small String Optimization (SSO) — short strings stored inline
+        - c_str() vs data() (data() is non-null-terminated before C++11)
+        - string concatenation performance (avoid + in loops)
+    - std::string_view (C++17)
+        - Non-owning, zero-copy view — avoid copies
+        - Dangling risk (view of temporary)
+    - I/O Streams
+        - std::cin, std::cout, std::cerr
+        - Stream states (good, bad, fail, eof)
+        - std::stringstream for parsing
+    - Formatting
+        - std::format (C++20) — type-safe, Python-like formatting
+        - printf vs iostream (performance, type safety tradeoffs)
+
+14. Design Patterns in C++
+    - Creational
+        - Singleton (Meyer's Singleton — thread-safe since C++11)
+        - Factory Method, Abstract Factory
+        - Builder Pattern
+    - Structural
+        - RAII (the #1 C++ pattern)
+        - Adapter, Decorator, Proxy
+        - Pimpl (Pointer to Implementation) — ABI stability, compilation firewall
+    - Behavioral
+        - Observer, Strategy, Command
+        - Visitor (double dispatch)
+    - C++-Specific Patterns
+        - CRTP (static polymorphism)
+        - Type Erasure (std::function, std::any)
+        - Policy-based Design (templates for strategy selection)
+        - Tag Dispatch
+
+15. Memory Layout & Low-Level Details
+    - Object Layout
+        - Struct padding & alignment (alignof, alignas)
+        - sizeof for classes with virtual functions (vtable pointer added)
+        - Empty Base Optimization (EBO)
+        - Standard Layout vs Trivial vs POD types
+    - Virtual Table (vtable) Mechanism
+        - One vtable per class (not per object)
+        - vptr stored in each polymorphic object
+        - Virtual function call overhead (~1 indirect function call)
+    - Cache & Performance
+        - Data-Oriented Design vs Object-Oriented Design
+        - Cache line size (~64 bytes), false sharing
+        - Contiguous memory (vector vs list performance)
+
+16. Error Handling Strategies
+    - Exceptions vs Error Codes
+        - When to use which (Google style: limited exceptions, Bloomberg: heavy exceptions)
+        - std::expected (C++23) — Rust-like Result type
+    - std::error_code / std::error_condition (system_error)
+    - Assertions
+        - assert() (disabled in release)
+        - static_assert (compile-time check, C++11)
+
+17. Build Systems & Tooling
+    - CMake
+        - CMakeLists.txt basics
+        - target_link_libraries, find_package
+    - Compilers
+        - GCC, Clang, MSVC differences
+        - Warning flags: -Wall -Wextra -Wpedantic -Werror
+    - Sanitizers
+        - AddressSanitizer (ASan) — buffer overflows, use-after-free
+        - ThreadSanitizer (TSan) — data races
+        - UndefinedBehaviorSanitizer (UBSan)
+    - Static Analysis
+        - clang-tidy, cppcheck
+    - Package Managers
+        - Conan, vcpkg
+
+18. Modern C++ Features by Standard
+    - C++11: auto, range-for, lambdas, smart pointers, move semantics, constexpr, nullptr, enum class, variadic templates, std::thread
+    - C++14: generic lambdas, return type deduction, std::make_unique, relaxed constexpr, variable templates
+    - C++17: structured bindings, if constexpr, std::optional/variant/any, std::string_view, fold expressions, class template argument deduction (CTAD), std::filesystem, parallel algorithms
+    - C++20: concepts, ranges, coroutines, modules, std::format, std::span, three-way comparison (<=>), consteval, constinit, std::jthread
+    - C++23: std::expected, std::print, deducing this, std::flat_map, std::generator
+
+19. Undefined Behavior & Common Pitfalls
+    - Categories of UB
+        - Signed integer overflow
+        - Dereferencing null/dangling pointer
+        - Out-of-bounds array access
+        - Use after free / double free
+        - Data races (concurrent unsynchronized access)
+        - Violating strict aliasing rules
+        - Shifting by negative or >= bit-width amount
+    - Implementation-Defined vs Unspecified vs Undefined
+    - Common Gotchas
+        - Order of evaluation of function arguments (unspecified until C++17)
+        - Returning reference to local variable
+        - Modifying a variable twice in one expression (i = i++ + ++i)
+        - Comparing signed and unsigned integers
+        - String literal lifetime (static storage duration — safe to return)
+
+20. Best Practices & Idioms
+    - C++ Core Guidelines (Bjarne Stroustrup & Herb Sutter)
+    - Prefer stack allocation over heap
+    - Prefer references over pointers
+    - Prefer smart pointers over raw pointers for ownership
+    - Use const everywhere possible
+    - Prefer enum class over enum
+    - Avoid raw new/delete
+    - Use RAII for all resource management
+    - Prefer algorithms over raw loops
+    - Follow the Rule of Zero (let compiler generate special members)
+    - Make interfaces hard to use incorrectly
