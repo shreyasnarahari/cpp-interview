@@ -1,51 +1,24 @@
-> Organized by topic, difficulty, and company where data is available.
-> Focus: real questions that appear in actual C++ interviews.
+# Meta (Facebook) — C++ Interview Questions
+
+> **Focus:** Concurrency & production systems
 
 ---
 
-## Company Focus Legend
-- **G** = Google
-- **M** = Meta (Facebook)
-- **MS** = Microsoft
-- **AM** = Amazon
-- **AP** = Apple
-- **BB** = Bloomberg
-- **JT** = Jane Street / Two Sigma (Quant firms)
-- **CT** = Citadel / Citadel Securities
+## Questions by Topic
 
----
+### Memory Management & RAII
 
-## 80/20 Priority Guide
-| Priority | Topics | Coverage |
-|----------|--------|----------|
-| P1 — Do first | Memory Management & RAII, OOP & Polymorphism, Templates, Move Semantics | ~60% of all C++ interviews |
-| P2 — Week 2 | STL Containers, Concurrency, Lambdas, Const Correctness, UB & Pitfalls | ~20% additional |
-| P3 — Senior level | Memory model, Template metaprogramming, Cache optimization, Design patterns, Coroutines | Remaining 20% |
-
----
-
-## 1. Memory Management & RAII
-
-### Beginner
+**Beginner**
 - What is the difference between stack and heap allocation? **[G, M, AM]**
-- What does `new` return? What does `delete` do? **[AM, MS]**
-- What is RAII? Why is it important in C++? **[G, BB]**
-- What happens if you call `delete` on a null pointer? *(nothing — it's a no-op)*
 
-### Intermediate
+**Intermediate**
 - What is `std::unique_ptr`? How does it differ from `std::shared_ptr`? **[G, M, BB]**
 - When would you use `std::weak_ptr`? Give a real example. *(breaking circular references)* **[G, M]**
-- Why should you use `std::make_unique` / `std::make_shared` instead of `new`? *(exception safety, single allocation for shared_ptr)* **[G, BB]**
-- What is the overhead of `std::shared_ptr` compared to raw pointers? *(control block + atomic refcount)* **[JT, BB]**
-- What happens if you mix `new[]` with `delete` (not `delete[]`)? *(undefined behavior)* **[MS, AM]**
 
-### Advanced
-- Explain the control block of `std::shared_ptr`. What does it contain? **[G, JT]**
-- What is placement new? When would you use it? **[JT, G]**
-- How does `std::make_shared` differ from `std::shared_ptr<T>(new T)` in terms of memory layout? *(single allocation vs two)* **[G, BB]**
+**Advanced**
 - What is a custom deleter? Write a `unique_ptr` that manages a `FILE*`. **[G, M]**
 
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What's wrong with this code?
 void process() {
@@ -85,31 +58,18 @@ void leak() {
 // Fix: make one of the pointers a std::weak_ptr.
 ```
 
----
+### OOP & Polymorphism
 
-## 2. OOP & Polymorphism
-
-### Beginner
-- What is the difference between `struct` and `class` in C++? *(default access: public vs private)* **[G, AM, MS]**
+**Beginner**
 - What is a virtual function? Why do we need it? **[G, M, AM]**
-- What is a pure virtual function? What is an abstract class? **[AM, MS]**
 - Why must a base class destructor be virtual if used polymorphically? **[G, M, BB]**
 
-### Intermediate
-- Explain the vtable mechanism. How does dynamic dispatch work? **[G, JT, BB]**
+**Intermediate**
 - What is object slicing? When does it happen? **[G, M]**
 - What is the Rule of Three / Rule of Five / Rule of Zero? **[G, M, BB]**
-- What is the diamond problem? How does virtual inheritance solve it? **[G, MS]**
 - What is the difference between `override` and `final`? **[M, AM]**
-- Explain CRTP (Curiously Recurring Template Pattern). When would you use it? **[G, JT]**
 
-### Advanced
-- What is the overhead of a virtual function call compared to a direct call? **[JT, G]**
-- How does `dynamic_cast` work internally? What does it need? *(RTTI, at least one virtual function)* **[G, BB]**
-- Explain the memory layout of an object with multiple inheritance and virtual functions. **[JT, G]**
-- What is the Empty Base Optimization (EBO)? **[JT]**
-
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What does this print?
 class Base {
@@ -173,29 +133,16 @@ int main() {
 // Cannot instantiate abstract classes. Fix: Animal* a = new Dog();
 ```
 
----
+### Templates
 
-## 3. Templates
-
-### Beginner
+**Beginner**
 - What is a function template? What is a class template? **[G, M]**
-- What is template argument deduction? **[G]**
-- What is the difference between a template and a macro? **[MS, AM]**
 
-### Intermediate
-- What is template specialization? What is partial specialization? **[G, JT]**
-- What is SFINAE? Give an example. **[G, JT, BB]**
+**Intermediate**
 - What are variadic templates? What is a parameter pack? **[G, M]**
-- What are fold expressions (C++17)? **[G, JT]**
 - What is `if constexpr` (C++17) and how does it differ from regular `if`? **[G, M]**
 
-### Advanced
-- What are C++20 Concepts? How do they improve on SFINAE? **[G, JT]**
-- Explain template metaprogramming. Write compile-time factorial. **[JT, G]**
-- What is tag dispatch? When would you use it? **[JT]**
-- What is `std::void_t` and how is it used for detection idiom? **[JT, G]**
-
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: Does this compile? If so, what does it print?
 template <typename T>
@@ -242,29 +189,17 @@ void Stack<int>::push(const int& val) { /* ... */ } // Error?
 // specialize Stack<int> first.
 ```
 
----
+### Move Semantics & Value Categories
 
-## 4. Move Semantics & Value Categories
-
-### Beginner
+**Beginner**
 - What is an lvalue? What is an rvalue? **[G, M, BB]**
 - What does `std::move` do? *(it's just a cast to T&&, it doesn't move anything)* **[G, M, BB]**
 - What is a move constructor? When is it called? **[G, M, AM]**
 
-### Intermediate
-- What is the state of a moved-from object? *(valid but unspecified)* **[G, BB]**
+**Intermediate**
 - When is the move constructor implicitly generated? When is it deleted? **[G, M]**
-- What is copy elision? What is RVO vs NRVO? **[G, JT, BB]**
-- Why should move operations be `noexcept`? *(std::vector only uses move if noexcept)* **[G, BB, JT]**
-- What is the difference between a forwarding reference (`T&&` in template) and an rvalue reference? **[G, JT]**
 
-### Advanced
-- Explain reference collapsing rules. **[JT, G]**
-- What is perfect forwarding? Write a `make_unique` implementation. **[G, JT]**
-- When does `std::move` on a return value PREVENT optimization? *(defeats NRVO)* **[G, JT]**
-- What are the C++17 guaranteed copy elision rules? **[JT, G]**
-
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What does this print?
 class Widget {
@@ -306,29 +241,18 @@ std::unique_ptr<Widget> create() {
 // Fix: just return w; — the compiler will apply NRVO or implicit move.
 ```
 
----
+### STL Containers & Iterators
 
-## 5. STL Containers & Iterators
-
-### Beginner
+**Beginner**
 - When would you use `std::vector` vs `std::list`? **[G, M, AM]**
-- What is the time complexity of `std::map::find()` vs `std::unordered_map::find()`? **[G, AM]**
 - What is `push_back` vs `emplace_back`? **[G, M, BB]**
 
-### Intermediate
+**Intermediate**
 - Explain iterator invalidation rules for `std::vector`. **[G, M, BB]**
-- What happens to iterators when you insert into a `std::map`? *(they remain valid)* **[G, BB]**
 - What is the difference between `std::map` and `std::unordered_map` internally? *(red-black tree vs hash table)* **[G, M, AM]**
-- When is `std::map` faster than `std::unordered_map`? *(small n, bad hash, need ordering)* **[JT, G]**
 - What is `std::vector::reserve()` vs `std::vector::resize()`? **[G, M]**
 
-### Advanced
-- What is `std::span` (C++20)? How does it differ from passing vector by reference? **[G]**
-- What is the Small Buffer Optimization in `std::string`? **[JT, BB]**
-- How does `std::vector` grow? What is the growth factor? *(typically 1.5x or 2x, implementation-defined)* **[JT, G]**
-- What is `std::deque`'s internal structure? *(array of fixed-size blocks)* **[JT]**
-
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What's wrong with this code?
 std::vector<int> v = {1, 2, 3, 4, 5};
@@ -364,31 +288,22 @@ std::cout << m[42];  // ?
 // Use m.at(42) to throw, or m.find(42) to check safely.
 ```
 
----
+### Concurrency & Multithreading
 
-## 6. Concurrency & Multithreading
-
-### Beginner
+**Beginner**
 - How do you create a thread in C++? **[G, M, AM]**
 - What is a mutex? Why do you need it? **[G, M, BB]**
 - What is `std::lock_guard`? How does it relate to RAII? **[G, M]**
 
-### Intermediate
-- What is the difference between `std::lock_guard` and `std::unique_lock`? **[G, BB]**
+**Intermediate**
 - What is a condition variable? What are spurious wakeups? **[G, M, BB]**
 - What is a deadlock? How do you prevent it? **[G, M, AM, BB]**
-- What is `std::atomic`? When would you use it instead of a mutex? **[G, JT, BB]**
 - What is `std::async`? What is the difference between `std::launch::async` and `std::launch::deferred`? **[M, AM]**
-- What is `std::scoped_lock` (C++17) and why is it preferred over multiple `lock_guard`? **[G, BB]**
 
-### Advanced
-- Explain the C++ memory model. What are memory orderings (relaxed, acquire, release, seq_cst)? **[JT, G]**
-- What is a data race vs a race condition? **[G, JT]**
-- What is `std::memory_order_acquire` / `std::memory_order_release`? When would you use them? **[JT]**
-- What is false sharing? How do you avoid it? *(cache line padding, alignas)* **[JT, G]**
+**Advanced**
 - Implement a thread-safe singleton. **[G, M, BB]**
 
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What's wrong with this code?
 std::mutex mtx;
@@ -446,23 +361,18 @@ void threadB() {
 // Fix: std::scoped_lock lock(m1, m2); — uses deadlock avoidance algorithm.
 ```
 
----
+### Lambda Expressions
 
-## 7. Lambda Expressions
-
-### Intermediate
+**Intermediate**
 - What is a lambda capture? Explain [=], [&], [x], [&x], [this], [*this]. **[G, M, BB]**
 - What is a mutable lambda? When do you need it? **[G, M]**
-- What is the difference between a lambda and `std::function`? *(lambda is a unique unnamed type; std::function is type-erased with overhead)* **[G, JT]**
 - What is a generic lambda (C++14)? How does it work internally? *(templated operator())* **[G, M]**
 
-### Advanced
+**Advanced**
 - What is an init capture (C++14)? How do you move a `unique_ptr` into a lambda? **[G, M]**
-- What is an immediately invoked lambda expression (IILE)? When is it useful? **[G, BB]**
-- What is a template lambda (C++20)? How does it differ from a generic lambda? **[JT, G]**
 - What is the lifetime issue with lambda captures by reference? **[G, M, BB]**
 
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What does this print?
 int x = 10;
@@ -499,26 +409,16 @@ fn = [](int a, int b) { return a * b; };  // ?
 // variable to a different lambda. Fix: use std::function<int(int,int)>.
 ```
 
----
+### Const Correctness & Type Casting
 
-## 8. Const Correctness & Type Casting
-
-### Beginner
+**Beginner**
 - What is the difference between `const int*`, `int* const`, and `const int* const`? **[G, M, AM]**
-- What is a const member function? **[G, BB]**
 
-### Intermediate
-- What is the `mutable` keyword? Give a real use case. *(caching, mutex in const method)* **[G, BB, JT]**
+**Intermediate**
 - What is the difference between `static_cast` and `dynamic_cast`? **[G, M, AM]**
-- When would you use `const_cast`? Is it ever safe? *(only if the original object is non-const)* **[G, BB]**
-- What is `reinterpret_cast`? When is it needed? *(low-level, serialization, hardware registers)* **[JT, G]**
 - What is the difference between `constexpr` and `const`? **[G, M, BB]**
 
-### Advanced
-- What are `consteval` and `constinit` (C++20)? **[JT, G]**
-- Why can't you call a non-const method on a const object? Explain the const overloading pattern. **[G, BB]**
-
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: Does this compile?
 const int ci = 42;
@@ -551,24 +451,13 @@ std::cout << c.getHits();
 // Common use case: caching, logging, mutex locking in const methods.
 ```
 
----
+### Undefined Behavior & Common Pitfalls
 
-## 9. Undefined Behavior & Common Pitfalls
-
-> The #1 topic that separates senior C++ engineers from everyone else.
-
-### Intermediate
+**Intermediate**
 - What is undefined behavior? Give 5 examples. **[G, M, JT]**
-- What is the difference between undefined behavior, unspecified behavior, and implementation-defined behavior? **[G, JT]**
-- Is signed integer overflow defined in C++? *(no — UB)* **[JT, G]**
 - What tools detect UB at runtime? *(ASan, UBSan, MSan, TSan)* **[G, M]**
 
-### Advanced
-- What is strict aliasing? When does it matter? **[JT, G]**
-- What is sequence point violation? Give an example. **[JT]**
-- Can the compiler assume UB never happens? *(yes — "time travel" optimization)* **[JT, G]**
-
-### Gotcha Code
+**Gotcha Code**
 ```cpp
 // Q: What does this print?
 int i = 0;
@@ -612,18 +501,8 @@ x = x + 1;  // ?
 
 ---
 
-## Company-Specific Focus Areas
+## Company-Specific Focus Questions
 
-### Google (depth on language mechanics & design)
-1. Explain the vtable mechanism — how does virtual dispatch work?
-2. Write a `make_unique` implementation using perfect forwarding
-3. What is SFINAE? Write a function that only accepts integral types
-4. Explain move semantics — what does std::move actually do?
-5. What is the Rule of Five? When does Rule of Zero apply?
-6. Implement a thread-safe queue using condition variables
-7. What is copy elision? When is it mandatory (C++17)?
-
-### Meta (concurrency & production systems)
 1. How do you prevent deadlocks in a system with many mutexes?
 2. Explain `std::shared_ptr` thread safety — what is and isn't thread-safe?
 3. What is a data race? How do you detect it? (TSan)
@@ -631,72 +510,6 @@ x = x + 1;  // ?
 5. When would you use `std::atomic` vs `std::mutex`?
 6. Explain the producer-consumer pattern in C++
 
-### Microsoft (OOP & systems)
-1. Explain multiple inheritance and the diamond problem
-2. What is virtual inheritance? What is its overhead?
-3. What is the difference between `struct` and `class`?
-4. Explain how `dynamic_cast` works
-5. What are the C++ type casting operators? When to use each?
-
-### Amazon (practical coding & correctness)
-1. Reverse a linked list — discuss ownership semantics
-2. Implement an LRU cache — discuss container choice (unordered_map + list)
-3. What is iterator invalidation? Give examples for vector, map
-4. What is the difference between `map` and `unordered_map`?
-5. What is exception safety? Explain the three guarantee levels
-
-### Bloomberg (RAII, const correctness, OOP)
-1. What is RAII? Implement a file handle wrapper
-2. Explain const correctness — what is a const member function?
-3. What is the Rule of Three? Write copy constructor and assignment operator
-4. What is the `mutable` keyword? Give a real use case
-5. Explain `std::shared_ptr` and `std::weak_ptr` — implement observer pattern
-
-### Citadel / Citadel Securities (low-latency, lock-free, hardware sympathy)
-> See also: [citadel-prep.md](../citadel-prep.md) for full implementations and system design
-
-**Lock-Free & Atomics**
-1. Implement a lock-free SPSC (single-producer, single-consumer) queue **[Critical]**
-2. Explain `memory_order_acquire` vs `memory_order_release` — when is each used? **[Critical]**
-3. What is the cost of `seq_cst` vs `acquire/release` on x86? On ARM? **[Critical]**
-4. Implement a spinlock using `std::atomic` — what memory ordering do you use?
-5. What is the ABA problem? How do tagged pointers solve it?
-6. What is false sharing? How do you detect and fix it? (`alignas(64)`, perf stat)
-7. When would you use `compare_exchange_weak` vs `compare_exchange_strong`?
-
-**Memory & Allocators**
-8. Implement an arena (bump) allocator — explain the trade-offs
-9. Implement a fixed-size object pool using a free list
-10. What happens when you call `new`? Trace from C++ → malloc → kernel
-11. What is placement new? When do you need explicit destructor calls?
-12. Why are allocations non-deterministic? What is `mmap` vs `brk`?
-
-**Performance & Cache**
-13. Explain the CPU cache hierarchy (L1/L2/L3). What are the latency numbers?
-14. What is cache-line size? How does it affect data structure design?
-15. SoA vs AoS — when does each perform better?
-16. What is branch prediction? How do you write branchless code?
-17. Why is `std::vector` faster than `std::list` for traversal despite O(n) insert?
-18. What is `[[likely]]` / `[[unlikely]]` (C++20)?
-
-**System Design**
-19. Design an in-memory limit order book with price-time priority
-20. Design an SPSC market data pipeline — from network to strategy
-21. How would you handle 10 million messages/second with < 1µs latency?
-
-**Templates & Compile-Time**
-22. How do you use CRTP to avoid virtual function overhead?
-23. Write a compile-time lookup table using `constexpr`
-24. When is `consteval` (C++20) better than `constexpr`?
-
-### Jane Street / Two Sigma / Other Quant Firms (low-level, performance, templates)
-1. What is cache locality? How does it affect container choice?
-2. Explain memory orderings in `std::atomic`
-3. What is template metaprogramming? Implement compile-time Fibonacci
-4. What is false sharing? How do you avoid it?
-5. What is strict aliasing? When does it matter?
-6. What is placement new? Implement a simple memory pool
-7. Explain the C++ memory model — what is happens-before?
 
 ---
 

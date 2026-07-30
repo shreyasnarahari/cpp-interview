@@ -9,7 +9,7 @@ An exhaustive, deep-dive reference repository and engineering laboratory for mas
 ```
 cpp-interview/
 ├── syllabus.txt          ← Comprehensive 20-topic C++ specification reference blueprint
-├── real-interview-q/     ← Production & company-tagged technical interview problem set
+├── real-interview-q/     ← Company-specific interview question files (Google, Meta, etc.)
 ├── citadel-prep.md       ← HFT / Quant low-latency C++ engineering guide & lock-free queues
 ├── core-topics/          ← 20 exhaustive topic modules with deep-dive theory & code banks
 │   ├── 01-memory-management-raii/
@@ -51,7 +51,7 @@ The primary mastery curriculum containing 20 dedicated topic folders. Each modul
 See [core-topics/README.md](./core-topics/README.md) for the full 20-module syllabus roadmap.
 
 ### 3. `real-interview-q/`
-`interview-questions.md` contains real-world technical problems categorized by topic and tagged by leading tech & quantitative trading firms (Google, Meta, Microsoft, Amazon, Apple, Bloomberg, Jane Street, Citadel).
+Company-specific interview question files split by firm: `google.md`, `meta.md`, `bloomberg.md`, `amazon.md`, `microsoft.md`, `jane-street.md`, and `citadel.md`. Each contains tagged questions by topic (Beginner/Intermediate/Advanced), gotcha code blocks, company-specific focus areas, and the master gotcha table.
 
 ### 4. `citadel-prep.md`
 Low-latency and performance-critical engineering guide covering lock-free data structures (SPSC ring buffers with `alignas(64)` cache isolation), custom arena allocators, cache hierarchy mechanics, and zero-allocation hot paths.
