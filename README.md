@@ -1,42 +1,70 @@
-# C++ Interview Prep
+# C++ Language Mastery & Engineering Reference
 
-A structured, 80/20 study system for C++ engineering interviews.
+An exhaustive, deep-dive reference repository and engineering laboratory for mastering modern C++ (C++11 through C++23), low-level memory mechanics, template metaprogramming, low-latency performance optimization, and production system design.
 
 ---
 
-## What's Here
+## Directory Architecture
 
 ```
 cpp-interview/
-├── syllabus.txt          ← Full 20-topic C++ syllabus (the complete map)
-├── real-interview-q/     ← Curated questions actually asked at real companies
-├── core-topics/          ← Deep-dive study material for the 9 highest-impact topics
-└── practice-cpp/         ← Scratch pad for running quick C++ experiments
+├── syllabus.txt          ← Comprehensive 20-topic C++ specification reference blueprint
+├── real-interview-q/     ← Production & company-tagged technical interview problem set
+├── citadel-prep.md       ← HFT / Quant low-latency C++ engineering guide & lock-free queues
+├── core-topics/          ← 20 exhaustive topic modules with deep-dive theory & code banks
+│   ├── 01-memory-management-raii/
+│   ├── 02-oop-polymorphism/
+│   ├── 03-templates-metaprogramming/
+│   ├── 04-move-semantics-value-categories/
+│   ├── 05-stl-containers-iterators/
+│   ├── 06-concurrency-multithreading/
+│   ├── 07-lambda-expressions-functional/
+│   ├── 08-const-correctness-type-system/
+│   ├── 09-undefined-behavior-pitfalls/
+│   ├── 10-exception-handling-noexcept/
+│   ├── 11-design-patterns/
+│   ├── 12-modern-cpp-features/
+│   ├── 13-stl-algorithms-ranges/
+│   ├── 14-low-level-memory-layout-optimization/
+│   ├── 15-tooling-build-systems-sanitizers/
+│   ├── 16-error-handling-strategies/
+│   ├── 17-io-formatting-strings/
+│   ├── 18-standards-chronology-cpp11-to-cpp23/
+│   ├── 19-cpp-core-guidelines-idioms/
+│   └── 20-build-systems-toolchains-package-managers/
+└── practice-cpp/         ← Executable C++20/23 CMake laboratory & performance benchmarks
 ```
 
 ---
 
-## Folders
+## Core Components
 
-### `syllabus.txt`
-The full C++ language syllabus — 20 topics covering everything from fundamentals to modern C++23 features. Use it as a reference map, not a study checklist. The `core-topics/` folder already picks out the 80/20 subset worth studying.
+### 1. `syllabus.txt`
+The master C++ map — 20 detailed modules covering everything from preprocessor translation units and memory layouts to template concepts, lock-free concurrency, and C++23 standard library additions (`std::expected`, `std::print`, `deducing this`).
 
-### `real-interview-q/`
-`interview-questions.md` — Questions organized by topic and tagged by company (Google, Meta, Microsoft, Amazon, Apple, Bloomberg, Jane Street). Includes gotcha code snippets with answers. Good for a high-level sweep before an interview or to identify gaps.
+### 2. `core-topics/`
+The primary mastery curriculum containing 20 dedicated topic folders. Each module provides:
+- **Exhaustive Deep-Dive Theory & Mechanics**: In-depth explanations of language semantics, compiler assembly generation, and standard library internals.
+- **Curated Learning Resources**: Hand-picked reading materials, standard specification references, and papers.
+- **Graded Problem Banks**: Complete Question & Answer banks covering Easy, Medium, Hard, and Real-World engineering scenarios.
 
-### `core-topics/`
-The main study folder. 9 topics that cover ~80% of what gets asked in real C++ interviews. Each topic has structured question banks (easy → medium → hard), coding problems with answers, and a reading list.
+See [core-topics/README.md](./core-topics/README.md) for the full 20-module syllabus roadmap.
 
-See [core-topics/README.md](./core-topics/README.md) for the full topic list and study approach.
+### 3. `real-interview-q/`
+`interview-questions.md` contains real-world technical problems categorized by topic and tagged by leading tech & quantitative trading firms (Google, Meta, Microsoft, Amazon, Apple, Bloomberg, Jane Street, Citadel).
 
-### `practice-cpp/`
-Minimal CMake project for running quick experiments. Edit `main.cpp`, build, and run.
+### 4. `citadel-prep.md`
+Low-latency and performance-critical engineering guide covering lock-free data structures (SPSC ring buffers with `alignas(64)` cache isolation), custom arena allocators, cache hierarchy mechanics, and zero-allocation hot paths.
+
+### 5. `practice-cpp/`
+A CMake-backed technical laboratory for compiling C++ snippets, running address/thread sanitizers, and conducting micro-benchmarks (e.g. dynamic vtable dispatch vs. static CRTP polymorphism).
 
 ---
 
-## Suggested Workflow
+## Master Recommended Study & Engineering Workflow
 
-1. **Scan** `real-interview-q/interview-questions.md` to get a feel for the question landscape
-2. **Study** topics from `core-topics/` in order (01 → 09), starting with P1 topics
-3. **Drill** `question-bank/real-interview-q-a.md` for each topic cold — no peeking
-4. **Review** `syllabus.txt` at the end to spot any remaining gaps
+1. **Exhaustive Theory**: Read through the targeted module in `core-topics/` (01 through 20).
+2. **Deep Mechanics**: Analyze assembly outputs, vtable layouts, and memory representations.
+3. **Problem Drilling**: Solve the problem banks (`easy.md` → `medium.md` → `hard.md`) and verify against production-grade C++ code implementations.
+4. **Hands-on Experimentation**: Test, benchmark, and run sanitizers inside `practice-cpp/`.
+

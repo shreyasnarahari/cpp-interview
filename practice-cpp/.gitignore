@@ -4,3 +4,5 @@ cmake-build-*/
 .vscode/
 *.o
 *.out
+*_bin
+
