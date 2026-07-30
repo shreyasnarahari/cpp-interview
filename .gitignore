@@ -1,2 +1,6 @@
 all_cpp_snippets.txt
-compilation_errors.log
+*.log
+
+# Build artifacts
+build/
+cmake-build-*/
