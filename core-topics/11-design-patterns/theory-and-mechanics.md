@@ -1,147 +1,146 @@
-# Theory & Mechanics: Design Patterns in Modern C++
+# Theory & Mechanics: Modern C++ Design Patterns
 
-## 1. Meyer's Singleton — Thread-Safety Guarantee (C++11)
+## 1. Creational Patterns
 
-C++11 guarantees that **local static variable initialization is thread-safe** (§6.7/4). The compiler emits a hidden guard variable with double-checked locking:
+### 1. Meyer's Singleton (Thread-Safe Magic Static)
+In C++11 and later, initialization of function-local static variables is **guaranteed to be thread-safe by the ISO language standard** ("Magic Statics").
 
 ```cpp
 class Singleton {
-public:
-    static Singleton& instance() {
-        static Singleton s;  // thread-safe since C++11 — guaranteed by the standard
-        return s;
-    }
 private:
     Singleton() = default;
-};
+    ~Singleton() = default;
+public:
+    Singleton(const Singleton&) = delete;
+    Singleton& operator=(const Singleton&) = delete;
 
-// Compiler generates approximately:
-static Singleton& instance() {
-    static bool __guard = false;
-    static char __storage[sizeof(Singleton)];
-
-    if (!__guard) {                          // fast path — no lock
-        __lock(__guard_mutex);               // slow path — lock
-        if (!__guard) {                      // double-check
-            new (__storage) Singleton();
-            __guard = true;
-        }
-        __unlock(__guard_mutex);
+    static Singleton& instance() {
+        static Singleton inst; // Thread-safe 1st-call initialization!
+        return inst;
     }
-    return *reinterpret_cast<Singleton*>(__storage);
-}
+};
 ```
+*Under the hood*: The compiler wraps local static initialization with an internal atomic flag check (`__cxa_guard_acquire` / `__cxa_guard_release`).
 
-**When NOT to use Singleton:** When the "single instance" requirement is artificial. Singletons make testing hard (global state), hide dependencies, and complicate destruction ordering. Prefer dependency injection.
+### 2. Factory Method vs Abstract Factory
+- **Factory Method**: Defines a virtual creation interface in a base class, deferring instantiation to derived classes (`virtual unique_ptr<Product> createProduct()`).
+- **Abstract Factory**: Provides an interface for creating **families of related or dependent objects** without specifying their concrete classes (`createButton()`, `createScrollbar()`).
 
-## 2. Pimpl Idiom — Compilation Firewall
+---
 
-Pimpl hides private members behind a pointer to an opaque type, providing **ABI stability** and **faster compilation** (changes to private members don't recompile dependents):
+## 2. Structural Patterns
+
+### 1. The Pimpl Idiom (Pointer to Implementation)
+Hide internal private member variables and includes from header files to achieve:
+1. **Compilation Firewall**: Modifying private implementation details in `Widget.cpp` does not trigger re-compilation of files including `Widget.h`.
+2. **ABI Stability**: Class memory size remains constant (`sizeof(Widget) == sizeof(unique_ptr)`), preserving binary compatibility across library updates.
 
 ```cpp
-// Widget.h — public header (stable ABI):
+// Widget.h
 #include <memory>
 class Widget {
 public:
     Widget();
-    ~Widget();  // MUST be declared here, defined in .cpp
-    Widget(Widget&&) noexcept;             // move ops must be declared
-    Widget& operator=(Widget&&) noexcept;  // for unique_ptr<incomplete>
+    ~Widget(); // MUST be declared in header, defined in .cpp!
     void do_work();
 private:
-    struct Impl;                 // forward declaration — incomplete type
-    std::unique_ptr<Impl> pImpl; // unique_ptr works with incomplete types
-};                               // (but destructor must be in .cpp where Impl is complete)
-
-// Widget.cpp — implementation (can change freely without recompiling clients):
-struct Widget::Impl {
-    std::vector<int> data;       // adding/removing members here doesn't affect ABI
-    std::string name;
-    DatabaseConnection db;       // heavyweight header only included in .cpp
+    struct Impl;
+    std::unique_ptr<Impl> pimpl_;
 };
-
-Widget::Widget() : pImpl(std::make_unique<Impl>()) {}
-Widget::~Widget() = default;    // defined HERE where Impl is complete
-Widget::Widget(Widget&&) noexcept = default;
-Widget& Widget::operator=(Widget&&) noexcept = default;
-
-void Widget::do_work() {
-    pImpl->db.query(pImpl->data);
-}
 ```
 
-**Cost:** One extra heap allocation (for Impl) + one pointer indirection per method call. Negligible for most applications, but relevant for hot paths.
+### 2. Decorator Pattern
+Dynamically attaches additional responsibilities to an object at runtime or compile-time without modifying the underlying class interface.
 
-## 3. Type Erasure — The Concept/Model Pattern
+---
 
-`std::function`, `std::any`, and custom type-erased wrappers all use the same internal pattern:
+## 3. Behavioral Patterns
 
-```
-Architecture:
-┌──────────────────────────────────┐
-│ TypeErased<Interface>            │
-│   unique_ptr<ConceptBase> ptr ───────→ ┌──────────────────────────┐
-└──────────────────────────────────┘     │ Model<ConcreteType>      │
-                                         │   ConcreteType object    │
-                                         │   virtual invoke() →     │
-                                         │     object.invoke()      │
-                                         └──────────────────────────┘
-```
+### 1. Strategy Pattern: Dynamic vs Static (CRTP)
+Allows switching algorithms at runtime (virtual dispatch) or compile time (template parameters).
 
+#### Dynamic Strategy (Runtime Virtual Dispatch):
 ```cpp
-// Example: type-erased callable (simplified std::function)
-class AnyCallable {
-    // Abstract base — the "Concept":
-    struct Concept {
-        virtual ~Concept() = default;
-        virtual int call(int) = 0;
-    };
-
-    // Concrete wrapper — the "Model" (templated):
-    template <typename F>
-    struct Model : Concept {
-        F func;
-        Model(F f) : func(std::move(f)) {}
-        int call(int x) override { return func(x); }
-    };
-
-    std::unique_ptr<Concept> ptr_;
-
-public:
-    // Template constructor accepts ANY callable matching the signature:
-    template <typename F>
-    AnyCallable(F f) : ptr_(std::make_unique<Model<F>>(std::move(f))) {}
-
-    int operator()(int x) { return ptr_->call(x); }
-};
-
-// Usage — stores lambda, function pointer, functor — all through one type:
-AnyCallable f1 = [](int x) { return x * 2; };
-AnyCallable f2 = &some_function;
+class LoggerStrategy { public: virtual ~LoggerStrategy() = default; virtual void log(std::string_view msg) = 0; };
+class ConsoleLogger : public LoggerStrategy { public: void log(std::string_view msg) override { std::cout << msg; } };
 ```
 
-## 4. Policy-Based Design — Compile-Time Strategy Selection
-
-Instead of virtual dispatch (runtime overhead), use **template parameters as policies**:
-
+#### Static Strategy (Policy-Based Design / CRTP):
 ```cpp
-// Strategy via virtual dispatch (runtime, ~5ns overhead per call):
-class SortStrategy { public: virtual void sort(Data&) = 0; };
-class QuickSort : public SortStrategy { void sort(Data& d) override { /*...*/ } };
-
-// Strategy via policy template (compile-time, zero overhead):
-template <typename SortPolicy, typename LogPolicy>
-class DataProcessor : private SortPolicy, private LogPolicy {
+template <typename OutputPolicy>
+class Logger : private OutputPolicy {
 public:
-    void process(Data& d) {
-        SortPolicy::sort(d);    // statically resolved, inlined
-        LogPolicy::log("done"); // statically resolved, inlined
+    void log(std::string_view msg) {
+        OutputPolicy::write(msg); // 0-cost inlined call!
     }
 };
-
-// Usage — policies composed at compile time:
-using FastProcessor = DataProcessor<QuickSort, NullLogger>;    // no logging overhead
-using DebugProcessor = DataProcessor<QuickSort, FileLogger>;   // with file logging
 ```
 
-Policy-based design trades **runtime flexibility** (can't change policy after compilation) for **zero-overhead abstraction** (all calls are inlined).
+### 2. Observer Pattern & Safe Weak Pointer Lifetime Management
+Subject notifies multiple observers when a state change occurs.
+
+**Dangling Reference Trap**: If an observer is destroyed while registered with a subject, calling `observer->notify()` causes Use-After-Free UB!
+**Fix**: Store observers as `std::weak_ptr<Observer>`:
+
+```cpp
+class Subject {
+    std::vector<std::weak_ptr<Observer>> observers_;
+public:
+    void notify(const std::string& event) {
+        for (auto it = observers_.begin(); it != observers_.end(); ) {
+            if (auto sp = it->lock()) { // Safely promote weak_ptr!
+                sp->on_notify(event);
+                ++it;
+            } else {
+                it = observers_.erase(it); // Clean up dead observers automatically!
+            }
+        }
+    }
+};
+```
+
+### 3. Visitor Pattern & Modern `std::visit`
+Double dispatch pattern allowing new virtual operations to be added to an existing class hierarchy without modifying classes. Modern C++ replaces hierarchy visitors with `std::variant` and `std::visit`:
+
+```cpp
+using Shape = std::variant<Circle, Rectangle>;
+
+struct RenderVisitor {
+    void operator()(const Circle& c) const { std::cout << "Circle"; }
+    void operator()(const Rectangle& r) const { std::cout << "Rectangle"; }
+};
+
+Shape s = Circle{};
+std::visit(RenderVisitor{}, s); // Double dispatch via type-matching!
+```
+
+---
+
+## 4. Advanced C++ Idioms: CRTP & Type Erasure
+
+### 1. CRTP (Curiously Recurring Template Pattern)
+Derived class inherits from a template base instantiated with the derived class itself (`class Derived : public Base<Derived>`).
+- **Use Cases**: Static polymorphism, mixin feature composition, avoiding vtable dispatch overhead.
+
+### 2. Type Erasure (`std::function`, Custom `Any`)
+Combines template constructors with internal non-template virtual interface wrappers to store ANY type matching an interface without requiring common base inheritance:
+
+```cpp
+class AnyPrintable {
+    struct Concept {
+        virtual ~Concept() = default;
+        virtual void print() const = 0;
+    };
+    template <typename T>
+    struct Model : Concept {
+        T object_;
+        Model(T obj) : object_(std::move(obj)) {}
+        void print() const override { std::cout << object_ << "\n"; }
+    };
+    std::unique_ptr<Concept> pimpl_;
+public:
+    template <typename T>
+    AnyPrintable(T obj) : pimpl_(std::make_unique<Model<T>>(std::move(obj))) {}
+    void print() const { pimpl_->print(); }
+};
+```

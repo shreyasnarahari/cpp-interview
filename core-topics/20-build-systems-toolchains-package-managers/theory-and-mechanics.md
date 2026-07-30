@@ -1,21 +1,25 @@
-# Theory & Mechanics: Build Systems & Toolchains
+# Theory & Mechanics: Build Systems, Toolchains & Package Managers
 
-## 1. Modern Target-Based CMake
+## 1. Compiler Optimization Flags Breakdown
 
-Avoid global commands (`include_directories`, `add_definitions`). Use target-scoped properties (`PUBLIC`, `PRIVATE`, `INTERFACE`):
-
-- `PRIVATE`: Requirement applies only to the target itself.
-- `PUBLIC`: Requirement applies to the target and any downstream targets linking against it.
-- `INTERFACE`: Requirement applies only to downstream targets linking against it (header-only libraries).
-
-```cmake
-add_library(core_engine ENGINE.cpp)
-target_include_directories(core_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_compile_options(core_engine PRIVATE -Wall -Wextra -Werror)
+```
+                    GCC / Clang Optimization Pipeline:
+  -O0 ─────────> -O2 ─────────> -O3 ─────────> -flto ─────────> -march=native
+(Debug)        (Release)      (Aggressive)    (Link-Time Opt)  (CPU Instruction SIMD)
 ```
 
-## 2. AddressSanitizer (ASan) Shadow Memory
+| Flag | Purpose | Mechanics & Impact |
+|---|---|---|
+| `-O2` | Standard Production | Enables loop vectorization, inlining, register allocation. |
+| `-O3` | Aggressive Optimization | Enables loop unrolling, vectorization passes, auto-inlining heuristics. |
+| `-flto` / `-ipo` | Link-Time Optimization | Emits LLVM/GIMPLE IR into `.o` files; performs **cross-TU inlining & devirtualization** during link phase. |
+| `-march=native` | Target Architecture | Generates SIMD instructions tailored to host CPU (AVX2, AVX-512, FMA). |
 
-ASan maps 1/8th of the virtual address space to "shadow bytes" to track byte poison states (redzones, stack frame boundaries, freed memory).
-- On access: ASan computes `shadow_addr = (mem_addr >> 3) + offset`.
-- If shadow byte is non-zero, an error is reported (`heap-use-after-free`, `buffer-overflow`).
+---
+
+## 2. Package Management: Conan vs vcpkg
+
+Modern C++ dependency management avoids checking pre-built binaries or third-party code directly into source control:
+
+1. **Conan** (Python-based, Multi-platform): Uses `conanfile.txt` / `conanfile.py` to pull binary packages from ConanCenter. Integration via `find_package()` in CMake.
+2. **vcpkg** (Microsoft/Community, C++-native): Manifest mode (`vcpkg.json`). Seamless CMake toolchain file integration (`-DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake`).

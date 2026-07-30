@@ -1,157 +1,126 @@
-# Theory & Mechanics: Modern C++ Features
+# Theory & Mechanics: Modern C++ Features (C++11 through C++23)
 
-## 1. Structured Bindings (C++17) — Decomposition
+## 1. Feature Chronology Matrix
 
-Structured bindings provide syntactic sugar to decompose aggregates, tuples, and pairs:
+```
+                       ISO C++ Standards Evolution:
+  ┌──────────┬──────────┬──────────┬───────────────────────┬──────────────────────┐
+  │  C++11   │  C++14   │  C++17   │        C++20          │        C++23         │
+  ├──────────┼──────────┼──────────┼───────────────────────┼──────────────────────┤
+  │ Move     │ Generic  │ Struct   │ Concepts, Ranges,     │ std::expected,       │
+  │ Semantics│ Lambdas, │ Bindings,│ Coroutines, Modules,  │ deducing this,       │
+  │ SmartPtrs│ Init     │ Optional,│ Spaceship (<=>),      │ std::print,          │
+  │ Lambdas  │ Captures,│ Variant, │ consteval, std::span, │ std::flat_map,       │
+  │ constexpr│ make_    │ String_  │ std::format,          │ std::generator       │
+  │ nullptr  │ unique   │ View     │ std::jthread          │                      │
+  └──────────┴──────────┴──────────┴───────────────────────┴──────────────────────┘
+```
+
+---
+
+## 2. Deep Dive: C++20 Spaceship Operator (`<=>`)
+
+The Three-Way Comparison Operator (`<=>`) evaluates ordering between two objects in a single operation:
 
 ```cpp
-std::map<std::string, int> scores = {{"Alice", 95}, {"Bob", 87}};
+#include <compare>
 
-for (const auto& [name, score] : scores) {
-    std::cout << name << ": " << score << "\n";
-}
-
-// Compiler generates approximately:
-for (const auto& __e : scores) {
-    const auto& name = __e.first;
-    const auto& score = __e.second;
-    // ...
-}
-```
-
-Works with: `std::pair`, `std::tuple`, `std::array`, structs with all-public members, and any type that specializes `std::tuple_size` and `std::get`.
-
-## 2. `std::optional` / `std::variant` — No Heap Allocation
-
-Both store their value **inline** using aligned storage — no dynamic allocation:
-
-```
-std::optional<int>:
-┌──────────────┬──────────┐
-│ bool engaged │ int data │   sizeof = 8 (4 + padding + 4)
-└──────────────┴──────────┘
-  If engaged == false, data is uninitialized (no value)
-
-std::variant<int, double, std::string>:
-┌─────────────┬────────────────────────────────┐
-│ size_t index│ aligned_union<int,double,string>│  sizeof = max(types) + index + padding
-└─────────────┴────────────────────────────────┘
-  index tracks which alternative is currently active
-  Accessing wrong alternative throws std::bad_variant_access
-```
-
-### `std::visit` — Pattern matching for variants:
-```cpp
-std::variant<int, double, std::string> v = "hello";
-
-std::visit([](auto&& arg) {
-    using T = std::decay_t<decltype(arg)>;
-    if constexpr (std::is_same_v<T, int>)         std::cout << "int: " << arg;
-    else if constexpr (std::is_same_v<T, double>) std::cout << "double: " << arg;
-    else if constexpr (std::is_same_v<T, std::string>) std::cout << "string: " << arg;
-}, v);
-```
-
-## 3. `if constexpr` (C++17) — Compile-Time Branch Elimination
-
-Unlike regular `if`, `if constexpr` **discards the false branch at compile time** — the discarded branch doesn't even need to be valid for the given type:
-
-```cpp
-template <typename T>
-auto process(T val) {
-    if constexpr (std::is_integral_v<T>) {
-        return val * 2;           // only compiled for integral types
-    } else if constexpr (std::is_floating_point_v<T>) {
-        return std::round(val);   // only compiled for floating-point types
-    } else {
-        static_assert(false, "unsupported type");  // compile error for other types
-    }
-}
-
-// Without if constexpr, you'd need SFINAE or template specialization
-// if constexpr makes this dramatically more readable
-```
-
-## 4. Three-Way Comparison `<=>` (C++20)
-
-The spaceship operator generates **all six comparison operators** from a single declaration:
-
-```cpp
 struct Point {
     int x, y;
-    auto operator<=>(const Point&) const = default;
-    // Compiler generates: ==, !=, <, <=, >, >=
-    // Comparison is lexicographic: first x, then y
-};
-
-// Return type categories:
-// strong_ordering  — exactly one of {less, equal, greater} (for int, string)
-// weak_ordering    — equivalent values may not be equal (case-insensitive string)
-// partial_ordering — some values are incomparable (NaN for floating-point)
-
-// Custom example:
-struct CaseInsensitiveString {
-    std::string s;
-    std::weak_ordering operator<=>(const CaseInsensitiveString& other) const {
-        return toLower(s) <=> toLower(other.s);  // delegates to string's <=>
-    }
+    auto operator<=>(const Point&) const = default; // Auto-generates all 6 comparison operators!
 };
 ```
 
-**Rewrite rules:** The compiler rewrites `a < b` to `(a <=> b) < 0`, and `a == b` to `(a <=> b) == 0`. You only need to define `operator<=>` and optionally `operator==` (for efficiency — `==` can short-circuit on size for strings).
+### Ordering Return Categories:
+1. **`std::strong_ordering`**: Strict total ordering (`less`, `equal`, `greater`). Substitutability holds (if $a == b$, then $f(a) == f(b)$). Used for integers and pointers.
+2. **`std::weak_ordering`**: Equivalent but not equal (e.g. case-insensitive string comparison `"Hello" == "hello"`).
+3. **`std::partial_ordering`**: Some values are incomparable (`unordered`). Used for floating-point numbers (`NaN <=> 1.0` returns `partial_ordering::unordered`).
 
-## 5. `deducing this` (C++23)
+---
 
-Explicit object parameter replaces CRTP for recursive lambdas and eliminates const/non-const overload duplication:
+## 3. Deep Dive: C++20 Coroutines Mechanics
+
+A C++20 Coroutine is a function that can **suspend execution** and **resume later** while preserving its internal stack frame.
+
+### The 3 Coroutine Keywords:
+- `co_await expr`: Suspends execution until an asynchronous operation completes.
+- `co_yield expr`: Returns a value to the caller and suspends execution (Generators).
+- `co_return expr`: Terminates execution and returns a final value.
+
+### Internal Coroutine Frame Allocation:
+When a coroutine is called, it allocates a **Coroutine Frame** on the heap (or optimized away via HALO - Heap Allocation Removal Optimization):
+
+```
+Coroutine Frame Anatomy (Heap Allocation):
+┌───────────────────────────────────────────────┐
+│ Promise Object (Manages return value/errors) │
+├───────────────────────────────────────────────┤
+│ Parameter Copies                              │
+├───────────────────────────────────────────────┤
+│ Local Variables                               │
+├───────────────────────────────────────────────┤
+│ Suspend / Resume Instruction Pointer State    │
+└───────────────────────────────────────────────┘
+```
+
+---
+
+## 4. Deep Dive: C++20 Ranges & Lazy Views
+
+C++20 Ranges pipeline operations lazily using composable pipe syntax (`|`), performing $0$ intermediate allocations:
 
 ```cpp
-// Before C++23 — must write two overloads:
-class Container {
-    std::vector<int> data;
-public:
-    int& at(size_t i)       { return data[i]; }
-    const int& at(size_t i) const { return data[i]; }  // duplicated logic!
-};
+#include <ranges>
+#include <vector>
+#include <iostream>
 
-// C++23 — single definition with deducing this:
-class Container {
-    std::vector<int> data;
-public:
+int main() {
+    std::vector<int> nums = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+
+    // Lazy evaluation: No elements are processed until iterated!
+    auto result = nums 
+        | std::views::filter([](int x) { return x % 2 == 0; })
+        | std::views::transform([](int x) { return x * x; })
+        | std::views::take(3);
+
+    for (int v : result) {
+        std::cout << v << " "; // PRINTS: 4 16 36
+    }
+}
+```
+
+---
+
+## 5. Vocabulary Types: `std::optional`, `std::variant`, `std::any`
+
+### 1. `std::optional<T>` (C++17)
+Represents a value that may or may not exist without heap allocation (uses `alignas(T) char storage[sizeof(T)]` inside).
+
+### 2. `std::variant<Ts...>` (C++17)
+Type-safe, non-allocating tagged union. Accessed via `std::get<T>(v)` or pattern-matched via `std::visit(visitor, v)`.
+
+### 3. `std::any` (C++17)
+Type-erased container that can hold ANY copyable type. Uses Small Buffer Optimization; allocates heap memory for large objects. Extracted via `std::any_cast<T>(a)`.
+
+---
+
+## 6. C++23 Breakthroughs: Monadic Error & `deducing this`
+
+### 1. Monadic Error Handling (`std::expected<T, E>`)
+Stores either a success value `T` or an error `E` without heap allocation or exception unwinding:
+```cpp
+std::expected<int, std::string> parse(std::string_view s);
+auto result = parse("123").transform([](int v) { return v * 2; });
+```
+
+### 2. Explicit Object Parameters (`deducing this`)
+Replaces CRTP and eliminates const/non-const method duplication:
+```cpp
+struct Node {
     template <typename Self>
-    auto&& at(this Self&& self, size_t i) {
-        return std::forward<Self>(self).data[i];
-        // If called on const object → returns const int&
-        // If called on non-const   → returns int&
-        // If called on rvalue      → returns int&&
+    auto&& get_value(this Self&& self) {
+        return std::forward<Self>(self).value_; // Deduces value category of caller!
     }
-};
-
-// Recursive lambda (replaces CRTP):
-auto fibonacci = [](this auto self, int n) -> int {
-    if (n <= 1) return n;
-    return self(n - 1) + self(n - 2);  // recursive call via self
+    int value_;
 };
 ```
-
-## 6. C++20 Coroutines — Lazy Generators
-
-```cpp
-#include <coroutine>
-#include <generator>  // C++23 std::generator
-
-std::generator<int> fibonacci() {
-    int a = 0, b = 1;
-    while (true) {
-        co_yield a;         // suspends, returns 'a' to caller
-        auto next = a + b;
-        a = b;
-        b = next;
-    }
-}
-
-for (int val : fibonacci() | std::views::take(10)) {
-    std::cout << val << " ";  // 0 1 1 2 3 5 8 13 21 34
-}
-```
-
-Coroutines enable **lazy, on-demand computation** without manual state machine construction. The compiler transforms the function into a state machine with a heap-allocated **coroutine frame** that stores local variables across suspension points.
