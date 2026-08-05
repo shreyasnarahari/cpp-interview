@@ -51,7 +51,8 @@ The primary mastery curriculum containing 20 dedicated topic folders. Each modul
 See [core-topics/README.md](./core-topics/README.md) for the full 20-module syllabus roadmap.
 
 ### 3. `real-interview-q/`
-Company-specific interview question files split by firm: `google.md`, `meta.md`, `bloomberg.md`, `nokia.md`, `amazon.md`, `microsoft.md`, `jane-street.md`, and `citadel.md`. Each contains tagged questions by topic (Beginner/Intermediate/Advanced), gotcha code blocks, company-specific focus areas, and the master gotcha table.
+Company-specific interview question files split by firm: `google.md`, `meta.md`, `bloomberg.md`, `nokia.md`, `adobe.md`, `amazon.md`, `microsoft.md`, `jane-street.md`, and `citadel.md`. Each contains tagged questions by topic (Beginner/Intermediate/Advanced), gotcha code blocks, company-specific focus areas, and the master gotcha table.
+
 
 
 ### 4. `citadel-prep.md`
