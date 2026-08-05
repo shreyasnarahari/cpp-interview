@@ -16,9 +16,11 @@ C++ interview questions organized by company, extracted from real interviews. Ea
 | Meta (Facebook) | [meta.md](./meta.md) | 38 | Concurrency & production systems |
 | Bloomberg (C++) | [bloomberg-cpp.md](./bloomberg-cpp.md) | 34 + expanded answers | RAII, const correctness, OOP, concurrency |
 | Bloomberg (Design) | [bloomberg-design.md](./bloomberg-design.md) | 12 design problems | Financial systems, data structures, real-time |
+| Nokia | [nokia.md](./nokia.md) | 52 | Embedded C++, Telecommunications, Sockets, RTOS, IPC |
 | Amazon | [amazon.md](./amazon.md) | 17 | Practical coding & correctness |
 | Microsoft | [microsoft.md](./microsoft.md) | 6 | OOP & systems |
 | Citadel | [citadel.md](./citadel.md) | 24 (focus) | Low-latency, lock-free, hardware sympathy |
+
 
 > **Note:** Citadel's questions are primarily in the [Company-Specific Focus section](./citadel.md) and the dedicated [citadel-prep.md](../citadel-prep.md) guide, rather than inline topic tags.
 
