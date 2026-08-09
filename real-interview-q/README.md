@@ -14,9 +14,8 @@ C++ interview questions organized by company, extracted from real interviews. Ea
 | Google | [google.md](./google.md) | 87 | Language mechanics & design |
 | Jane Street / Two Sigma | [jane-street.md](./jane-street.md) | 42 | Low-level, performance, templates |
 | Meta (Facebook) | [meta.md](./meta.md) | 38 | Concurrency & production systems |
-| Bloomberg (C++) | [bloomberg-cpp.md](./bloomberg-cpp.md) | 43 + assembly & mechanics deep-dives | RAII, const correctness, OOP, type erasure, concurrency |
-| Bloomberg (Design) | [bloomberg-design.md](./bloomberg-design.md) | 17 design problems | Financial systems, L2/L3 order books, real-time data |
-
+| Bloomberg (C++) | [bloomberg-cpp.md](./bloomberg-cpp.md) | 34 + expanded answers | RAII, const correctness, OOP, concurrency |
+| Bloomberg (Design) | [bloomberg-design.md](./bloomberg-design.md) | 12 design problems | Financial systems, data structures, real-time |
 | Nokia | [nokia.md](./nokia.md) | 52 | Embedded C++, Telecommunications, Sockets, RTOS, IPC |
 | Adobe | [adobe.md](./adobe.md) | 52 | Custom Memory, Document Engines, Undo/Redo, Filters |
 | Amazon | [amazon.md](./amazon.md) | 17 | Practical coding & correctness |
