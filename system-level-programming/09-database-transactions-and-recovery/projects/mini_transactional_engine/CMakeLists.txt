@@ -1,0 +1,3 @@
+add_executable(test_transactions test_transactions.cpp)
+target_include_directories(test_transactions PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_transactions PRIVATE sys_common)

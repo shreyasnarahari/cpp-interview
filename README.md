@@ -56,7 +56,7 @@ Advanced low-latency systems and kernel engineering laboratory covering:
 - Nanosecond hardware cycle timing (`rdtsc`/`rdtscp`) and latency distribution tracking.
 - Zero-allocation lock-free diagnostic & async-signal-safe logging.
 - Cache-line alignment, hardware interference sizes, and struct memory layout inspection.
-- 9-module curriculum bridging bare-metal hardware, Linux systems programming, and modern C++20.
+- 12-module curriculum bridging bare-metal hardware, Linux systems programming, database kernels (storage, indexing, MVCC/recovery), and production capstone systems.
 
 See [system-level-programming/README.md](./system-level-programming/README.md) for the complete roadmap.
 

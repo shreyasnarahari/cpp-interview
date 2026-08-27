@@ -1,0 +1,3 @@
+add_executable(test_buffer_pool test_buffer_pool.cpp)
+target_include_directories(test_buffer_pool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_buffer_pool PRIVATE sys_common)

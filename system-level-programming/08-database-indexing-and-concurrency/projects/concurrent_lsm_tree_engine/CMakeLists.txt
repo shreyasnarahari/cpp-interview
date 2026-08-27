@@ -1,0 +1,7 @@
+add_executable(test_lsm_engine test_lsm_engine.cpp)
+target_include_directories(test_lsm_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_lsm_engine PRIVATE sys_common)
+
+add_executable(bench_lsm_engine bench_lsm_engine.cpp)
+target_include_directories(bench_lsm_engine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bench_lsm_engine PRIVATE sys_common)

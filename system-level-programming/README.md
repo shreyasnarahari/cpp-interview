@@ -29,15 +29,23 @@ system-level-programming/
 │   ├── logger.hpp                                    ← Zero-allocation lock-free diagnostic logger
 │   └── memory_utils.hpp                              ← Cache alignment, hardware interference & hex dumper
 │
-├── 01-virtual-memory-hugepages-allocators/           ← mmap, page tables, TLB, HugeTLB, Arena & Slab allocators
-├── 02-cache-hierarchy-memory-ordering/               ← False sharing, cache line alignment, MESI, SIMD prefetch
-├── 03-lockfree-waitfree-primitives/                  ← SPSC ring buffers, MPMC queues, ABA prevention, Hazard Pointers
-├── 04-async-io-uring-networking/                     ← io_uring SQ/CQ rings, epoll reactor, zero-copy socket I/O
-├── 05-linux-kernel-primitives-futex-signals/         ← Linux futex syscall, async-signal safety, eventfd, timerfd
-├── 06-cpu-pinning-numa-realtime-scheduling/          ← Thread affinity, NUMA allocation, SCHED_FIFO, OS jitter reduction
-├── 07-elf-binary-internals-linking-loaders/          ← ELF header parsing, dynamic linking, PLT/GOT, dlsym, ASLR
-├── 08-simd-vectorization-branchless-code/            ← AVX2/AVX-512 intrinsics, SW prefetch, branchless arithmetic
-└── 09-profiling-perf-sanitizers-hardware-counters/   ← Linux perf, PMU counters, Flamegraphs, ASan/TSan/UBSan
+├── 01-os-abi-and-syscall-internals/                  ← SysV ABI, Ring 3->0, ELF64, PLT/GOT, Bare-Metal -nostdlib
+├── 02-virtual-memory-and-custom-allocators/          ← 4-Level Page tables, TLB, Page faults, Buddy & Slab allocators
+├── 03-cpu-microarchitecture-optimization/            ← CPU OoO pipeline, Memory hierarchy, AoS vs SoA, AVX2 SIMD
+├── 04-hardware-sync-and-lock-free-internals/         ← MESI, Memory models, Wait-free SPSC ring, Lock-free MPMC queue
+├── 05-advanced-io-and-event-engines/                 ← Non-blocking I/O, Edge-Triggered epoll, Linux io_uring reactor
+├── 06-systems-ipc-and-shared-memory/                 ← POSIX shared memory, Linux futex mutex, Sub-100ns SHM IPC
+│
+├── 07-database-storage-and-buffer-pool/              ← 4KB Slotted page layout, Buffer Pool Manager, LRU-K (k=2)
+├── 08-database-indexing-and-concurrency/             ← B+ Tree Latch Crabbing, LSM-Tree Engine, MemTable & SSTables
+├── 09-database-transactions-and-recovery/            ← MVCC Version Chains, Undo Logs, Snapshot Isolation, ARIES WAL
+│
+├── 10-signals-traps-and-runtime-control/             ← Linux signals, sigaltstack, ptrace, Async-signal-safe crash probe
+├── 11-kernel-diagnostics-ebpf-profiling/             ← Hardware PMUs, Linux perf, eBPF Uprobes, Sanitizers internals
+└── 12-capstone-systems/                              ← 3 Full-Scale Production Capstone Architectures
+    ├── 01-shm-orderbook-feed/                        ← Ultra-Low Latency L2 Shared-Memory Orderbook & Tick-to-Trade
+    ├── 02-embedded-lsm-kv-database/                  ← Production Embedded LSM KV Engine with io_uring WAL & Compaction
+    └── 03-cooperative-fiber-scheduler/               ← High-Performance User-Space Cooperative Fiber Scheduler
 ```
 
 ---
