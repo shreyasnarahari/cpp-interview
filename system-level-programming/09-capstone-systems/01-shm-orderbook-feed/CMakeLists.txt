@@ -1,0 +1,7 @@
+add_executable(test_orderbook test_orderbook.cpp)
+target_include_directories(test_orderbook PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_orderbook PRIVATE sys_common rt)
+
+add_executable(bench_tick_to_trade bench_tick_to_trade.cpp)
+target_include_directories(bench_tick_to_trade PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bench_tick_to_trade PRIVATE sys_common rt)

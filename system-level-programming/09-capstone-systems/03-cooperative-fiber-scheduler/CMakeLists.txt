@@ -1,0 +1,7 @@
+add_executable(test_fiber_scheduler test_fiber_scheduler.cpp)
+target_include_directories(test_fiber_scheduler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_fiber_scheduler PRIVATE sys_common)
+
+add_executable(bench_fibers bench_fibers.cpp)
+target_include_directories(bench_fibers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bench_fibers PRIVATE sys_common)

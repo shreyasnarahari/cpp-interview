@@ -1,0 +1,7 @@
+add_executable(test_lockfree_queues test_lockfree_queues.cpp)
+target_include_directories(test_lockfree_queues PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_lockfree_queues PRIVATE sys_common)
+
+add_executable(bench_lockfree_queues bench_lockfree_queues.cpp)
+target_include_directories(bench_lockfree_queues PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(bench_lockfree_queues PRIVATE sys_common)

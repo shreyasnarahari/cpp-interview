@@ -4,3 +4,9 @@ all_cpp_snippets.txt
 # Build artifacts
 build/
 cmake-build-*/
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+*.out

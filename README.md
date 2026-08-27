@@ -32,6 +32,7 @@ cpp-interview/
 │   ├── 18-standards-chronology-cpp11-to-cpp23/
 │   ├── 19-cpp-core-guidelines-idioms/
 │   └── 20-build-systems-toolchains-package-managers/
+├── system-level-programming/ ← Low-latency, Linux kernel primitives & hardware engineering lab
 └── practice-cpp/         ← Executable C++20/23 CMake laboratory & performance benchmarks
 ```
 
@@ -43,22 +44,29 @@ cpp-interview/
 The master C++ map — 20 detailed modules covering everything from preprocessor translation units and memory layouts to template concepts, lock-free concurrency, and C++23 standard library additions (`std::expected`, `std::print`, `deducing this`).
 
 ### 2. `core-topics/`
-The primary mastery curriculum containing 20 dedicated topic folders. Each module provides:
+The primary mastery curriculum containing 20 dedicated topic modules. Each module provides:
 - **Exhaustive Deep-Dive Theory & Mechanics**: In-depth explanations of language semantics, compiler assembly generation, and standard library internals.
 - **Curated Learning Resources**: Hand-picked reading materials, standard specification references, and papers.
 - **Graded Problem Banks**: Complete Question & Answer banks covering Easy, Medium, Hard, and Real-World engineering scenarios.
 
 See [core-topics/README.md](./core-topics/README.md) for the full 20-module syllabus roadmap.
 
-### 3. `real-interview-q/`
+### 3. `system-level-programming/`
+Advanced low-latency systems and kernel engineering laboratory covering:
+- Nanosecond hardware cycle timing (`rdtsc`/`rdtscp`) and latency distribution tracking.
+- Zero-allocation lock-free diagnostic & async-signal-safe logging.
+- Cache-line alignment, hardware interference sizes, and struct memory layout inspection.
+- 9-module curriculum bridging bare-metal hardware, Linux systems programming, and modern C++20.
+
+See [system-level-programming/README.md](./system-level-programming/README.md) for the complete roadmap.
+
+### 4. `real-interview-q/`
 Company-specific interview question files split by firm: `google.md`, `meta.md`, `bloomberg.md`, `nokia.md`, `adobe.md`, `amazon.md`, `microsoft.md`, `jane-street.md`, and `citadel.md`. Each contains tagged questions by topic (Beginner/Intermediate/Advanced), gotcha code blocks, company-specific focus areas, and the master gotcha table.
 
-
-
-### 4. `citadel-prep.md`
+### 5. `citadel-prep.md`
 Low-latency and performance-critical engineering guide covering lock-free data structures (SPSC ring buffers with `alignas(64)` cache isolation), custom arena allocators, cache hierarchy mechanics, and zero-allocation hot paths.
 
-### 5. `practice-cpp/`
+### 6. `practice-cpp/`
 A CMake-backed technical laboratory for compiling C++ snippets, running address/thread sanitizers, and conducting micro-benchmarks (e.g. dynamic vtable dispatch vs. static CRTP polymorphism).
 
 ---
