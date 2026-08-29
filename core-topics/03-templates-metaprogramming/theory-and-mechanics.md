@@ -1,182 +1,279 @@
-# Theory & Mechanics: Templates & Metaprogramming
+# Templates & Metaprogramming — Deep Theory & Mechanics
 
-## 1. Template Instantiation & Overload Resolution
-
-### Instantiation Model
-Templates are not compiled into machine code until **instantiated** with concrete types:
-- **Implicit Instantiation**: The compiler generates code when a template is used (`std::vector<int> v;`).
-- **Explicit Instantiation**: Forces compilation of a specific instantiation (`template class std::vector<double>;`).
-- **Template Code Bloat**: Instantiating `MyTemplate<T>` for 50 distinct types generates 50 separate copies of binary instructions.
-
-### Overload Resolution Rules
-When a function call matches both template and non-template overloads, the compiler follows a strict precedence:
-
-1. **Non-Template Function Exact Match**: Takes precedence over any template!
-2. **Template Function Specialization**: If a template is explicitly specified (`f<int>(42)`).
-3. **Primary Template Deduction**: Deduces types dynamically.
-
-```cpp
-template <typename T> void f(T)    { std::cout << "template\n"; }
-template <>           void f(int)  { std::cout << "specialized\n"; }
-void                       f(int)  { std::cout << "non-template\n"; }
-
-f(42);      // Calls non-template -> prints "non-template"
-f<int>(42); // Explicit specialization -> prints "specialized"
-f(3.14);    // Deduces double -> prints "template"
-```
-
-**CRITICAL RULE**: Function templates **CANNOT be partially specialized**! Only class templates and variable templates support partial specialization. For function templates, use overloading or C++20 Concepts.
+An exhaustive, low-level guide to C++ template instantiation mechanics, two-phase lookup, dependent names, SFINAE, C++20 Concepts & Constraints, variadic templates, fold expressions, type traits, and compile-time metaprogramming.
 
 ---
 
-## 2. SFINAE (Substitution Failure Is Not An Error)
+## 1. Template Compilation Model & Two-Phase Lookup
 
-### Core Mechanics
-When substituting deduced template arguments into a function signature fails, the compiler does **not** emit a compilation error. Instead, it quietly discards that candidate overload from the candidate set.
+Templates are not executable code; they are **code-generation blueprints**. The compiler evaluates templates in **Two Distinct Phases**:
 
-### `std::enable_if` Implementation
-```cpp
-template <bool B, typename T = void>
-struct enable_if {}; // Primary template (B == false): no ::type defined!
-
-template <typename T>
-struct enable_if<true, T> { using type = T; }; // Specialization (B == true)
-
-template <bool B, typename T = void>
-using enable_if_t = typename enable_if<B, T>::type;
+```
++-------------------------------------------------------------------------------+
+| PHASE 1: TEMPLATE DEFINITION PARSING (Syntax & Non-Dependent Name Checking)   |
+|                                                                               |
+|  - Checked at template declaration time (before any instantiations).          |
+|  - Validates basic C++ grammar and binds NON-DEPENDENT names.                 |
+|  - Non-dependent types and functions must be declared before this point.      |
++---------------------------------------|---------------------------------------+
+                                        v (Instantiation with concrete types)
++-------------------------------------------------------------------------------+
+| PHASE 2: TEMPLATE INSTANTIATION (Dependent Name Binding & Code Generation)    |
+|                                                                               |
+|  - Triggered when template is invoked with concrete types (e.g. `Vector<int>`).|
+|  - DEPENDENT names are looked up via Argument-Dependent Lookup (ADL).          |
+|  - Emits concrete assembly functions in the object file (`.o`).               |
++-------------------------------------------------------------------------------+
 ```
 
-#### SFINAE Usage Example:
+### 1.1 Dependent Names & The `typename` Disambiguator
+
+A name that depends on a template parameter `T` is an **unresolved dependent name**. By default, the C++ standard grammar assumes that any dependent qualified name `T::Something` is a **variable or static data member**, not a type!
+
 ```cpp
-// Only enabled for integral types
+template <typename T>
+void process() {
+    // ERROR without `typename`: Compiler interprets `T::iterator * ptr` as multiplication!
+    // (Value T::iterator multiplied by variable ptr)
+    T::iterator* ptr; 
+
+    // CORRECT: Explicitly informs the compiler that `iterator` is a nested type
+    typename T::iterator* ptr; 
+}
+```
+
+### 1.2 The `template` Disambiguator for Dependent Member Templates
+
+Similarly, when calling a template member function on a dependent type, the `<` character is parsed as a "less-than" operator unless prefixed by the `template` keyword:
+
+```cpp
+template <typename T>
+void execute(T& obj) {
+    // ERROR without `template`: Parsed as `(obj.convert < int) > (42)`
+    obj.convert<int>(42);
+
+    // CORRECT:
+    obj.template convert<int>(42);
+}
+```
+
+---
+
+## 2. Template Specialization vs Overloading
+
+### 2.1 Full vs Partial Specialization
+
+- **Class Templates**: Support **both** Full Specialization and Partial Specialization.
+- **Function Templates**: Support **ONLY Full Specialization**. Function templates **CANNOT be partially specialized**!
+
+```cpp
+// Primary Class Template
+template <typename T, typename U>
+struct Pair {};
+
+// 1. Partial Specialization: When second type is a pointer
+template <typename T, typename U>
+struct Pair<T, U*> {};
+
+// 2. Partial Specialization: When both types are identical
+template <typename T>
+struct Pair<T, T> {};
+
+// 3. Full Specialization: Exact concrete types
+template <>
+struct Pair<int, double> {};
+```
+
+### 2.2 Why You Should Overload Function Templates, NOT Specialize Them!
+
+Specializations of function templates **do not participate in overload resolution**. Overload resolution considers only the primary templates; only *after* the best primary template is selected does the compiler check if a specialization exists!
+
+```cpp
+// Primary Template 1
+template <typename T>
+void print(T* p) { std::cout << "Pointer version\n"; }
+
+// Primary Template 2
+template <typename T>
+void print(T val) { std::cout << "Value version\n"; }
+
+// Full Specialization of Template 2 for int* (Trap!)
+template <>
+void print<int*>(int* p) { std::cout << "Specialized int*\n"; }
+
+int* x = nullptr;
+print(x); // PRINTS: "Pointer version"! (Template 1 was selected as best match,
+          // so the specialization on Template 2 was completely ignored!)
+```
+
+**Rule**: Always prefer **regular function overloading** over function template specialization!
+
+---
+
+## 3. SFINAE & Substitution Failure Is Not An Error
+
+### 3.1 What is SFINAE?
+When deducing template arguments, if substituting a deduced type into the function signature causes an invalid type or expression, the compiler does **NOT** generate a compile error. Instead, it silently discards that candidate from the overload set!
+
+### 3.2 `std::enable_if_t` Mechanics
+
+```cpp
+// Custom implementation of std::enable_if
+template <bool Condition, typename T = void>
+struct enable_if {};
+
+template <typename T>
+struct enable_if<true, T> { using type = T; };
+
+template <bool Condition, typename T = void>
+using enable_if_t = typename enable_if<Condition, T>::type;
+```
+
+#### Constraining Functions with SFINAE:
+```cpp
+// Enabled ONLY for Integral types
 template <typename T, typename = std::enable_if_t<std::is_integral_v<T>>>
 void process(T val) {
     std::cout << "Integer: " << val << "\n";
 }
+
+// Enabled ONLY for Floating-Point types
+template <typename T, typename = std::enable_if_t<std::is_floating_point_v<T>>>
+void process(T val) {
+    std::cout << "Float: " << val << "\n";
+}
 ```
 
-### Detection Idiom via `std::void_t` (C++17)
-`std::void_t<Ts...>` maps any list of valid types to `void`. If any expression inside `void_t` is invalid, substitution fails (SFINAE):
+### 3.3 Expression SFINAE & The Detector Idiom (`std::void_t`)
 
 ```cpp
+// Detects whether a type T has a `.serialize()` member function
 template <typename T, typename = void>
 struct has_serialize : std::false_type {};
 
 template <typename T>
-struct has_serialize<T, std::void_t<decltype(std::declval<T>().serialize())>> 
-    : std::true_type {};
+struct has_serialize<T, std::void_t<decltype(std::declval<T>().serialize())>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool has_serialize_v = has_serialize<T>::value;
 ```
 
 ---
 
-## 3. C++20 Concepts & Constraints
+## 4. C++20 Concepts & Constraints
 
-Concepts replace verbose, cryptic SFINAE templates with readable, compile-time constraints and clear compiler diagnostics.
+C++20 Concepts replace ugly SFINAE templates with clean, expressive, compile-time constraints and readable compiler error messages.
+
+### 4.1 Concept Definition & `requires` Expressions
 
 ```cpp
-#include <concepts>
-
-// Concept definition
 template <typename T>
-concept Hashable = requires(T a) {
-    { std::hash<T>{}(a) } -> std::same_as<size_t>;
+concept Numeric = std::is_integral_v<T> || std::is_floating_point_v<T>;
+
+template <typename T>
+concept Printable = requires(T a) {
+    { std::cout << a } -> std::same_as<std::ostream&>;
 };
 
-// Constrained template function
-template <Hashable T>
-void print_hash(T obj) {
-    std::cout << std::hash<T>{}(obj) << "\n";
-}
+template <typename T>
+concept Serializable = requires(T a) {
+    { a.serialize() } -> std::convertible_to<std::string>;
+    typename T::serialized_type;
+};
 ```
 
-### Four Forms of `requires` Clauses:
-1. **Simple Requirement**: `a + b;` (verifies expression compiles).
-2. **Type Requirement**: `typename T::value_type;` (verifies nested type exists).
-3. **Compound Requirement**: `{ expr } -> Concept;` (verifies return type satisfies concept).
-4. **Nested Requirement**: `requires sizeof(T) == 8;` (verifies boolean compile-time predicate).
+### 4.2 Four Syntaxes for Applying Concepts
+
+```cpp
+// 1. Constrained Template Parameter
+template <Numeric T>
+T add(T a, T b) { return a + b; }
+
+// 2. Trailing Requires Clause
+template <typename T>
+requires Numeric<T> && Printable<T>
+void calculate(T val);
+
+// 3. Terse Auto Syntax (C++20)
+auto multiply(Numeric auto a, Numeric auto b) { return a * b; }
+
+// 4. In-place Ad-hoc Constraint
+template <typename T>
+requires requires(T x) { x.size(); }
+void display_size(const T& container);
+```
+
+### 4.3 Concept Subsumption & Overload Resolution
+When two overloads are both valid, the compiler automatically picks the **more constrained** concept (subsumption rule) without requiring manual disambiguation!
 
 ---
 
-## 4. Variadic Templates & Fold Expressions (C++17)
+## 5. Variadic Templates & Fold Expressions
 
-### Parameter Packs & `sizeof...`
-Parameter packs (`Args... args`) accept zero or more template arguments. `sizeof...(args)` queries the pack size at compile time.
-
-### Fold Expressions Syntax (C++17)
-Replaces complex recursive variadic template instantiations with single-line expansion:
-
-| Fold Type | Syntax | Expansion (`sum(1, 2, 3)`) |
-|---|---|---|
-| **Unary Right Fold** | `(pack op ...)` | `(1 + (2 + 3))` |
-| **Unary Left Fold** | `(... op pack)` | `((1 + 2) + 3)` |
-| **Binary Right Fold** | `(pack op ... op init)` | `(1 + (2 + (3 + 0)))` |
-| **Binary Left Fold** | `(init op ... op pack)` | `(((0 + 1) + 2) + 3)` |
+### 5.1 Parameter Packs & Pack Expansion
+A variadic template accepts an arbitrary number of template arguments using `typename... Args` and expands them with `Args...`.
 
 ```cpp
+template <typename... Args>
+size_t count_arguments(Args... args) {
+    return sizeof...(Args); // Returns number of types in pack at compile-time
+}
+```
+
+### 5.2 The 4 Types of Fold Expressions (C++17)
+
+| Fold Syntax | Expression | Expanded Form |
+|---|---|---|
+| **Unary Right Fold** | `(args + ...)` | `(arg1 + (arg2 + (arg3 + ...)))` |
+| **Unary Left Fold** | `(... + args)` | `(((... + arg1) + arg2) + arg3)` |
+| **Binary Right Fold** | `(args + ... + init)` | `(arg1 + (arg2 + (... + init)))` |
+| **Binary Left Fold** | `(init + ... + args)` | `(((init + arg1) + arg2) + ...)` |
+
+#### Practical Fold Expression Examples:
+```cpp
+// 1. Sum all arguments (Unary Left Fold)
 template <typename... Args>
 auto sum(Args... args) {
-    return (... + args); // Unary Left Fold
+    return (... + args);
 }
 
+// 2. Print all arguments separated by spaces (Binary Left Fold)
 template <typename... Args>
-void print_all(Args&&... args) {
-    (std::cout << ... << args) << "\n"; // Fold over binary operator<<
+void print_all(const Args&... args) {
+    ((std::cout << args << ' '), ...);
+    std::cout << '\n';
+}
+
+// 3. Logical ALL / ANY check
+template <typename... Args>
+bool all_true(Args... args) {
+    return (... && args);
 }
 ```
 
 ---
 
-## 5. Compile-Time Evaluation: `constexpr`, `consteval`, `constinit`
+## 6. Compile-Time Metaprogramming: `constexpr` vs `consteval`
 
-| Keyword | Evaluation Timing | Primary Purpose |
-|---|---|---|
-| `constexpr` | Compile-time **if inputs are constant**; runtime otherwise | Functions/variables usable in compile-time contexts |
-| `consteval` (C++20) | **GUARANTEED Compile-Time ONLY** (Immediate functions) | Enforces 0 runtime overhead execution |
-| `constinit` (C++20) | Compile-time **initialization**, runtime value modification | Eliminates Static Initialization Order Fiasco |
+- **`constexpr`**: Evaluated at compile-time if given compile-time constants; otherwise evaluated at **runtime**.
+- **`consteval` (C++20 Immediate Functions)**: **Guaranteed** to execute exclusively at compile-time. Emits a compiler error if invoked in a runtime context.
+- **`constinit` (C++20)**: Guarantees static/thread-local variable initialization at compile-time (eliminating the Static Initialization Order Fiasco).
 
 ```cpp
-consteval int square(int x) { return x * x; }
-constexpr int val = square(5); // OK - compiled at compile time
-int n = 5;
-// int runtime_val = square(n); // ERROR! consteval cannot take non-const runtime argument
-```
+// Compile-time FNV-1a String Hashing
+consteval uint64_t hash_string(std::string_view str) {
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (char c : str) {
+        hash = (hash ^ static_cast<uint64_t>(c)) * 0x100000001b3ULL;
+    }
+    return hash;
+}
 
----
-
-## 6. Type Traits Implementation from Scratch
-
-### 1. `std::is_same<T, U>`
-```cpp
-template <typename T, typename U>
-struct is_same : std::false_type {};
-
-template <typename T>
-struct is_same<T, T> : std::true_type {};
-
-template <typename T, typename U>
-inline constexpr bool is_same_v = is_same<T, U>::value;
-```
-
-### 2. `std::remove_reference<T>`
-```cpp
-template <typename T> struct remove_reference      { using type = T; };
-template <typename T> struct remove_reference<T&>  { using type = T; };
-template <typename T> struct remove_reference<T&&> { using type = T; };
-```
-
----
-
-## 7. Dependent Type Names & Disambiguators (`typename` & `template`)
-
-When referencing a type or template inside a class template that depends on a template parameter `T`:
-
-1. **`typename` Disambiguator**: Mandatory before dependent nested types (`typename T::value_type ptr;`). Without `typename`, the compiler assumes `value_type` is a static member variable (multiplication error).
-2. **`template` Disambiguator**: Mandatory when calling a dependent member template function (`obj.template get<int>();`).
-
-```cpp
-template <typename T>
-void process_container(T& container) {
-    typename T::iterator it = container.begin(); // Requires 'typename'
-    container.template convert<double>();         // Requires 'template'
+// Used in switch cases (which require compile-time integer constants!)
+void handle_event(std::string_view event_name) {
+    switch (hash_string(event_name)) { // Error if hash_string weren't compile-time!
+        case hash_string("ORDER_NEW"):     /* ... */ break;
+        case hash_string("ORDER_CANCEL"):  /* ... */ break;
+    }
 }
 ```

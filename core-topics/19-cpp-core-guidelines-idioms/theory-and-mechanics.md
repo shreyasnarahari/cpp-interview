@@ -1,34 +1,81 @@
-# Theory & Mechanics: C++ Core Guidelines & Production Idioms
+# C++ Core Guidelines & Idioms — Deep Theory & Mechanics
 
-## 1. C++ Core Guidelines Summary (Bjarne Stroustrup & Herb Sutter)
-
-The C++ Core Guidelines provide production-proven rules for writing type-safe, resource-safe, and high-performance modern C++:
-
-### Key Guideline Categories:
-
-1. **Resource Management (R.1 – R.37)**:
-   - **R.1**: Never manage resources manually using raw `new` and `delete`. Use RAII wrappers (`std::unique_ptr`, `std::shared_ptr`, `std::vector`).
-   - **R.10**: Avoid raw pointers (`T*`) for ownership transfer. Raw pointers denote **non-owning observers**.
-
-2. **Interface Design (I.1 – I.30)**:
-   - **I.2**: Avoid global variables (eliminates static initialization race conditions).
-   - **I.11**: Never pass a raw pointer for a non-nullable parameter. Use references `T&`.
-   - **I.23**: Keep number of function parameters minimal (group related parameters into structs).
-
-3. **Functions & Expressions (F.1 – F.60)**:
-   - **F.16**: For input parameters, pass cheap-to-copy types by value, large types by `const T&`, and move-only types by value (`std::move`).
+An exhaustive guide to the Bjarne Stroustrup and Herb Sutter C++ Core Guidelines, essential production idioms (RAII, Copy-and-Swap, Pimpl, NVI, ScopeGuard, Type Erasure), parameter passing rules, and resource ownership models.
 
 ---
 
-## 2. Fundamental C++ Production Idioms
+## 1. The Core Philosophy of the C++ Core Guidelines
+
+| Principle | Guideline Statement | Engineering Impact |
+|---|---|---|
+| **P.1** | *Express ideas directly in code.* | Use `std::span` over `(ptr, len)`; use `std::unique_ptr` over raw owning pointer. |
+| **P.2** | *Write in ISO Standard C++.* | Avoid non-standard compiler extensions for portability. |
+| **P.3** | *Express intent.* | Use `const` variables, `const` methods, `[[nodiscard]]`, `override`. |
+| **P.4** | *Ideally, a program should be statically type safe.* | Eliminate casts, raw `union`s, and `void*` in favor of `std::variant` and templates. |
+| **P.5** | *Prefer compile-time over run-time checks.* | Maximize `static_assert`, `constexpr`, and Concepts. |
+| **P.8** | *Don't leak any resources.* | Manage all resource lifetimes through deterministic RAII containers. |
+
+---
+
+## 2. Resource Management Guidelines (R-Series)
+
+- **R.1**: *Store dynamic objects in RAII containers (`unique_ptr`, `shared_ptr`, `vector`).*
+- **R.11**: *Avoid calling `malloc`/`free` directly in application code.*
+- **R.20**: *Use `std::unique_ptr` or `std::shared_ptr` to represent ownership.*
+- **R.21**: *Prefer `unique_ptr` over `shared_ptr` unless resource sharing is truly required.*
+
+---
+
+## 3. The Parameter Passing Decision Matrix (F-Series)
 
 ```
-                  Essential Modern C++ Production Idioms:
-  ┌───────────────┬───────────────────────────────┬───────────────────────────────┐
-  │     RAII      │         Pimpl Idiom           │         Type Erasure          │
-  ├───────────────┼───────────────────────────────┼───────────────────────────────┤
-  │ Resource      │ Pointer to Implementation.    │ Polymorphism without base     │
-  │ scope-bound   │ Compilation firewall,         │ inheritance wrappers          │
-  │ cleanup.      │ ABI binary stability.         │ (std::function, std::any).    │
-  └───────────────┴───────────────────────────────┴───────────────────────────────┘
+                            PARAMETER PASSING DECISION TREE
+                                         |
+                       Is the parameter an Input, Output, or In-Out?
+                                  /            \
+                                 /              \
+                              INPUT           IN-OUT / OUTPUT
+                              /                    \
+            Is the type cheap to copy?              Use `T&` (In-Out) or
+             (e.g., sizeof(T) <= 2*sizeof(void*)    Return by Value (Output)!
+              and trivial copy constructor)
+                  /            \
+                YES             NO
+                /                \
+          Pass by VALUE     Pass by CONST REFERENCE
+           (`void f(int)`)      (`void f(const Heavy& obj)`)
+```
+
+---
+
+## 4. Production C++ Idioms
+
+### 4.1 Scope Guard (Rollback / Cleanup on Exit)
+
+```cpp
+template <typename F>
+class ScopeGuard {
+    F cleanup_;
+    bool dismissed_{false};
+public:
+    explicit ScopeGuard(F f) : cleanup_(std::move(f)) {}
+    ~ScopeGuard() { if (!dismissed_) cleanup_(); }
+    void dismiss() noexcept { dismissed_ = true; }
+};
+```
+
+### 4.2 Non-Virtual Interface (NVI) Idiom
+Public member functions are **non-virtual** (enforcing pre/post-conditions), while customization points are **private virtual**:
+
+```cpp
+class ParserBase {
+public:
+    void parse(std::string_view data) {
+        log_start();
+        do_parse(data); // Calls private virtual implementation!
+        log_finish();
+    }
+private:
+    virtual void do_parse(std::string_view data) = 0; // Customization hook
+};
 ```

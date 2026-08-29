@@ -1,265 +1,319 @@
-# Theory & Mechanics: Memory Management & RAII
+# Memory Management & RAII — Deep Theory & Mechanics
 
-## 1. Stack vs Heap — Low-Level Architecture
-
-### Stack Allocation Mechanics
-The stack is a contiguous block of memory allocated per thread by the OS kernel (typically 1–8 MB). Stack allocation is performed in hardware via CPU instructions:
-- **Allocation**: `sub rsp, N` (decrements the stack pointer by `N` bytes).
-- **Deallocation**: `add rsp, N` (increments the stack pointer back).
-
-Stack management operates in $O(1)$ constant time with **zero syscalls** and optimal **L1/L2 cache locality** because memory addresses are sequentially reused.
-
-```
-Stack Frame Anatomy (x86-64 System V ABI):
-┌─────────────────────────┐ ← High Address (Caller Frame)
-│ Function Arguments 7..N │
-├─────────────────────────┤
-│ Return Address (8B)     │ ← Pushed by CALL instruction
-├─────────────────────────┤
-│ Saved RBP (8B)          │ ← Base pointer of caller frame
-├─────────────────────────┤ ← RBP (Frame Pointer)
-│ Local Variable 1        │
-│ Local Variable 2        │
-│ Alignment Padding       │
-└─────────────────────────┘ ← RSP (Stack Pointer, Low Address)
-```
-
-**Stack Overflow**: Occurs when stack pointer `RSP` crosses the guard page boundary at the end of the stack region (caused by deep recursion or allocating massive array buffers on the stack, e.g. `char buf[10000000]`).
-
-### Heap Allocation Mechanics
-The heap is an unmapped virtual address space managed dynamically by the runtime allocator (`glibc ptmalloc`, `tcmalloc`, or `jemalloc`).
-1. **Allocator Lookup**: `new T` calls `malloc(sizeof(T))`. The allocator searches its thread-local cache or global free-list for a matching chunk size (using strategies like first-fit, best-fit, or segregated free-lists).
-2. **System Calls**: If no block is available, the allocator requests new virtual memory pages from the kernel:
-   - `brk()` / `sbrk()`: Extends the process data segment boundary (for small allocations).
-   - `mmap()`: Maps a new anonymous memory region (typically for allocations $\ge 128$ KB).
-3. **Physical Memory Mapping**: Memory returned by `mmap`/`brk` is virtual. Physical RAM pages are allocated on-demand via CPU **page faults** when bytes are first written.
+An exhaustive, engineering-grade reference on C++ memory architecture, the memory model, physical & virtual address spaces, dynamic allocation internals, RAII, smart pointer mechanics, allocator design, and memory corruption diagnosis.
 
 ---
 
-## 2. RAII (Resource Acquisition Is Initialization) & Deterministic Destruction
+## 1. Memory Architecture & Address Space Layout
 
-### Core Principle
-RAII ties the lifecycle of a resource (heap memory, file handle `FILE*`, database connection, mutex lock) to the lifetime of a stack-allocated object:
-- **Constructor**: Acquires the resource and establishes class invariants. If acquisition fails, throws an exception.
-- **Destructor**: Automatically releases the resource when the object goes out of scope (normal exit, `return`, or **stack unwinding** during exception handling).
+### 1.1 Process Virtual Address Space (x86-64 Linux)
 
-### Deterministic Destruction vs Garbage Collection
-| Dimension | C++ RAII (Deterministic) | Garbage Collection (Java/Go/C#) |
+Every 64-bit user-space process runs within its own virtual address space isolated by the OS kernel and CPU Memory Management Unit (MMU) with 4-level page tables (PML4).
+
+```
++-------------------------------------------------------------------+ 0x7FFFFFFFFFFF (Canonical User Space Limit)
+| STACK (Grows Downward <-)                                         |
+|  - Stack frames: Return addresses, saved %rbp, local variables   |
+|  - Bounded size (~1MB to 8MB; `ulimit -s`)                        |
++-------------------------------------------------------------------+
+|                           |                                       |
+|                           v (Downwards)                           |
+|                                                                   |
+|                           ^ (Upwards)                             |
+|                           |                                       |
++-------------------------------------------------------------------+
+| MEMORY MAPPING SEGMENT (`mmap`)                                   |
+|  - Shared libraries (.so), dynamic allocations > MMAP_THRESHOLD   |
+|  - Memory-mapped files, anonymous memory pages                    |
++-------------------------------------------------------------------+
+| HEAP (Grows Upward -> via `brk`/`sbrk`)                           |
+|  - Managed by allocator (`glibc ptmalloc`, `jemalloc`, `tcmalloc`)|
++-------------------------------------------------------------------+
+| BSS SEGMENT (Uninitialized Global/Static Variables)               |
+|  - Zero-filled on demand by OS kernel (Copy-on-Write zero page)   |
++-------------------------------------------------------------------+
+| DATA SEGMENT (Initialized Global/Static Variables)                |
+|  - Explicitly initialized data loaded directly from ELF binary    |
++-------------------------------------------------------------------+
+| TEXT SEGMENT (Executable Machine Code & `.rodata`)                |
+|  - Read-Only & Executable (RX); string literals, jump tables      |
++-------------------------------------------------------------------+ 0x0000000000400000
+| RESERVED NULL PAGE (Traps nullptr dereferences via Page Fault)    |
++-------------------------------------------------------------------+ 0x0000000000000000
+```
+
+### 1.2 Stack vs. Heap: Physical Mechanics
+
+| Metric | Stack Allocation | Heap Allocation |
 |---|---|---|
-| **Release Timing** | Exact scope exit ($O(1)$ stack unwinding) | Non-deterministic (background GC thread sweep) |
-| **Resource Support** | Unifies memory, file descriptors, sockets, mutex locks | Primarily handles memory; requires `try-with-resources`/`Finalize` for non-memory |
-| **Latency Profile** | Zero latency spikes; predictable destruction overhead | Periodic GC pause spikes (Stop-The-World phases) |
+| **Allocation Mechanism** | Pointer subtraction on `%rsp` register (Single CPU instruction: `sub %rsp, N`). | Dynamic allocator metadata lookup (`ptmalloc` bins, chunk splitting, locks, or `mmap`/`brk` syscalls). |
+| **Allocation Latency** | **$< 1\text{ ns}$** (Deterministic, near-instantaneous). | **$10\text{ ns} - 100+\text{ ns}$** (Non-deterministic; cache misses, lock contention, page faults). |
+| **Deallocation** | Pointer addition on `%rsp` register (`add %rsp, N`). | Free-list coalescing, chunk insertion, potential OS unmapping (`madvise`/`munmap`). |
+| **Lifetime** | Automatic / Lexical scope-bound. | Explicit / Programmatic (until `delete`, `free`, or refcount reach zero). |
+| **Cache Locality** | Extremely high (hot top-of-stack in L1 CPU cache). | Variable; vulnerable to spatial fragmentation and pointer chasing. |
+| **Thread Safety** | Thread-local private stack (zero contention). | Global shared heap (requires per-thread arenas or mutex synchronization). |
+| **Capacity** | Fixed limit ($1 - 8\text{ MB}$; overflow triggers `SIGSEGV`). | Bound only by physical RAM + OS Swap space. |
 
 ---
 
-## 3. Allocation Mechanics: `new`, `delete`, `new[]`, `delete[]`
+## 2. Dynamic Memory Primitives: C vs C++
 
-### Underlying Steps of `new` and `delete`
-`Widget* w = new Widget(42);` executes two distinct steps generated by the compiler:
-1. **Memory Allocation**: Calls `operator new(sizeof(Widget))` to allocate uninitialized raw bytes.
-2. **Constructor Invocation**: Executes `Widget::Widget(42)` via placement `new` at the allocated memory address.
+### 2.1 `malloc`/`free` vs `new`/`delete`
 
-`delete w;` executes the inverse:
-1. **Destructor Invocation**: Calls `w->~Widget()`.
-2. **Memory Deallocation**: Calls `operator delete(w)` to free the memory block back to the heap allocator.
+```
+                    +-------------------------------------------------+
+                    | `new T(args...)` Expression                     |
+                    +-------------------------------------------------+
+                                            |
+                         1. Allocate Memory | (Calls `operator new(sizeof(T))`)
+                                            v
+                    +-------------------------------------------------+
+                    | Raw Heap Chunk (Uninitialized Memory)           |
+                    +-------------------------------------------------+
+                                            |
+                       2. Construct Object  | (Invokes `T::T(args...)` in-place)
+                                            v
+                    +-------------------------------------------------+
+                    | Fully Initialized Object at Typed Address       |
+                    +-------------------------------------------------+
+```
 
-### Array Allocation: `new[]` vs `delete[]`
-`Widget* arr = new Widget[10];`
-- Allocates memory for 10 `Widget` objects PLUS a 4/8-byte header storing the array length (`cookie`).
-- Calls default constructor 10 times.
+- **`malloc(size_t)`**: Allocates raw, unformatted bytes. Does **NOT** invoke constructors. Returns `void*` or `NULL` on failure.
+- **`new T`**: Two-stage operation:
+  1. Allocates raw memory via `operator new(sizeof(T))`.
+  2. Constructs object in-place by calling `T::T(...)`.
+  3. Throws `std::bad_alloc` on memory exhaustion (unless `std::nothrow` is passed: `new (std::nothrow) T`).
+- **`new[]` vs `delete[]` Array Suffix Mechanics**:
+  - `new T[N]` allocates memory for $N$ objects **plus an allocator cookie header** (usually 8 bytes on 64-bit platforms) storing the array size $N$.
+  - `delete[] ptr` reads the size cookie immediately preceding `ptr`, calls the destructor `~T()` on all $N$ elements in reverse order, and frees the entire block.
+  - **Fatal UB Trap**: Invoking `delete ptr` on memory allocated with `new[]` skips element destructors and miscalculates the base heap pointer, causing heap corruption!
 
-**Mismatched `delete` Bug**:
-- Calling `delete arr;` (instead of `delete[] arr;`): The compiler invokes the destructor on `arr[0]` only, then passes the object pointer to `operator delete`, bypassing the array length cookie. This results in **Undefined Behavior (UB)**, destructor omission for remaining elements (`arr[1..9]`), and heap corruption.
-- Calling `delete[]` on a single object (`new Widget`): Reads non-existent cookie header bytes prior to object address → heap corruption / crash.
+### 2.2 Placement `new` and Explicit Destructor Invocation
 
-### `delete nullptr` Safety
-Executing `delete ptr;` or `delete[] ptr;` when `ptr == nullptr` is guaranteed to be a safe no-op by the C++ standard.
-
----
-
-## 4. Smart Pointer Internals & Memory Layouts
-
-### 1. `std::unique_ptr<T, Deleter>`
-- **Ownership**: Exclusive single ownership. Non-copyable (`copy constructor = delete`), move-only.
-- **Size Overhead**: Zero overhead when using default `std::default_delete<T>` (`sizeof(unique_ptr<T>) == sizeof(T*)`). Uses Empty Base Optimization (EBO) or `[[no_unique_address]]` (C++20) for stateless deleters.
-- **Custom Deleters**: When a custom deleter is a function pointer or stateful lambda, `sizeof(unique_ptr)` increases by the size of the deleter state/pointer.
+Placement `new` constructs an object within a pre-allocated memory buffer without requesting heap memory from the OS allocator:
 
 ```cpp
-// Custom Deleter for C FILE* handle
-struct FileCloser {
-    void operator()(FILE* f) const { if (f) fclose(f); }
-};
-using ScopedFile = std::unique_ptr<FILE, FileCloser>;
-```
+alignas(alignof(Widget)) uint8_t storage[sizeof(Widget)];
 
-### 2. `std::shared_ptr<T>`
-- **Ownership**: Shared reference-counted ownership.
-- **Object Layout**: Always consists of two raw pointers (`16 bytes` on 64-bit platforms):
-  1. `T* ptr`: Pointer to the managed resource.
-  2. `ControlBlock* cb`: Pointer to the heap-allocated control block.
+// 1. Placement new: Constructs Widget directly in 'storage'
+Widget* w = new (storage) Widget("AAPL", 150.0);
 
-```
-shared_ptr Memory Layout (std::make_shared vs Separate raw new):
+// 2. Usage
+w->process();
 
-1) std::shared_ptr<T>(new T)  [Two Heap Allocations]:
-   shared_ptr Object:             Control Block:              Managed Object T:
-   ┌──────────────┐              ┌────────────────────┐      ┌────────────────┐
-   │ T* ptr  ───────────────────>│ strong_count: 1    │      │ T data members │
-   │ CtrlBlock* ───────────────>│ weak_count:   1    │      └────────────────┘
-   └──────────────┘              │ Custom Deleter     │
-                                 │ Custom Allocator   │
-                                 └────────────────────┘
-
-2) std::make_shared<T>(args) [Single Contiguous Heap Allocation]:
-   shared_ptr Object:             Combined Allocation Block:
-   ┌──────────────┐              ┌────────────────────┬────────────────┐
-   │ T* ptr  ───────────────────>│ strong_count: 1    │ T data members │
-   │ CtrlBlock* ───────────────>│ weak_count:   1    │                │
-   └──────────────┘              │ Custom Allocator   │                │
-                                 └────────────────────┴────────────────┘
-```
-
-#### Control Block Fields:
-1. `strong_count`: Number of `shared_ptr` instances managing the object.
-2. `weak_count`: Number of `weak_ptr` instances + (1 if `strong_count > 0`).
-3. Custom deleter (if supplied).
-4. Custom allocator (if supplied).
-
-#### `make_shared` vs `shared_ptr(new T)` Advantages & Trade-Offs:
-- **Advantages of `make_shared`**:
-  - **Single Allocation**: One heap `malloc` for both object and control block (half the allocation overhead, superior CPU cache locality).
-  - **Exception Safety**: Eliminates subtle memory leaks during function call argument evaluation prior to C++17 (`f(std::shared_ptr<A>(new A), g())`).
-- **Disadvantages of `make_shared`**:
-  - **Delayed Memory Release**: Because the object and control block share a single allocation block, the memory occupied by `T` cannot be freed until `weak_count` reaches 0 (even if `strong_count == 0`).
-  - **No Custom Deleter**: `make_shared` cannot accept custom deleters.
-
-#### Thread Safety Guarantees:
-- **Reference Count Manipulations**: **Thread-safe**. Increments/decrements of `strong_count` use atomic CPU operations (`lock xadd` on x86).
-- **Pointed-to Object Operations**: **NOT Thread-safe**. Concurrent reads/writes to `*sp` require explicit synchronization (`std::mutex` or `std::atomic<std::shared_ptr<T>>`).
-
-### 3. `std::weak_ptr<T>`
-- **Purpose**: Non-owning observer of a `shared_ptr`-managed object. Breaks circular reference memory leaks.
-- **Locking**: Must call `.lock()` to attempt promotion to `std::shared_ptr<T>`. Returns `nullptr` if `expired() == true` (`strong_count == 0`).
-
-```
-Circular Reference Leak Fix:
-┌──────────┐   shared_ptr (next)   ┌──────────┐
-│  Node A  │──────────────────────>│  Node B  │
-│          │<──────────────────────│          │
-└──────────┘    weak_ptr (prev)    └──────────┘
-```
-
-### 4. `std::enable_shared_from_this<T>`
-Allows a class method to safely obtain a `shared_ptr<T>` to `this` without creating a duplicate control block.
-- **Mechanism**: Inheriting from `enable_shared_from_this<T>` adds a private `weak_ptr<T>` member. When the object is first wrapped inside a `shared_ptr`, the constructor populates this internal `weak_ptr`.
-- **Usage**: Call `shared_from_this()` inside class member functions.
-- **Gotcha**: Calling `shared_from_this()` on an object created on the stack or before wrapping in a `shared_ptr` throws `std::bad_weak_ptr`.
-
----
-
-## 5. Advanced Concepts: Placement `new`, Custom Allocators, and Pimpl
-
-### Placement `new`
-Constructs an object at a pre-allocated raw memory address without allocating heap memory:
-```cpp
-#include <new>
-
-alignas(alignof(Widget)) char buffer[sizeof(Widget)]; // Raw memory
-Widget* w = new (buffer) Widget(42);                  // Construct in-place
-
-// MUST call destructor explicitly! Do NOT call delete w;
+// 3. Explicit Destructor: MANDATORY (do NOT call delete w!)
 w->~Widget();
 ```
 
-### Custom Object Pools
-Pre-allocates contiguous memory arrays and manages free slots to achieve $O(1)$ allocation/deallocation without global heap contention.
+---
+
+## 3. RAII & The Exception-Safety Guarantees
+
+### 3.1 Resource Acquisition Is Initialization (RAII)
+RAII binds the lifecycle of a resource (heap memory, file descriptors, socket handles, mutex locks, database transactions) to the lifetime of an automatic (stack-allocated) object.
+
+```
+Scope Entry -> Constructor Acquires Resource
+     |
+  [Normal Execution OR Exception Thrown]
+     |
+Stack Unwinding (Automatic, Deterministic) -> Destructor Releases Resource
+```
+
+### 3.2 The Four Exception Safety Levels
+
+1. **Nothrow (No-fail) Guarantee**: The function is guaranteed never to throw an exception under any circumstances (`noexcept`). Mandatory for destructors, move operations, and swap routines.
+2. **Strong Exception Guarantee (Commit-or-Rollback)**: If an exception is thrown, program state remains exactly as it was before the function call (no partial state changes).
+3. **Basic Exception Guarantee**: If an exception is thrown, no resources or memory are leaked, and all objects remain in an internally consistent, destructible state.
+4. **No Guarantee**: If an exception occurs, memory is leaked, invariants are violated, or undefined behavior ensues.
+
+### 3.3 The Copy-and-Swap Idiom
+Achieves the **Strong Exception Guarantee** and eliminates code duplication between copy constructors and copy assignment operators:
 
 ```cpp
-template <typename T, size_t Capacity>
-class ObjectPool {
-    alignas(alignof(T)) char storage_[Capacity * sizeof(T)];
-    std::vector<T*> free_list_;
+class DynamicArray {
+    size_t size_{0};
+    int* data_{nullptr};
+
 public:
-    ObjectPool() {
-        for (size_t i = 0; i < Capacity; ++i) {
-            free_list_.push_back(reinterpret_cast<T*>(storage_ + i * sizeof(T)));
-        }
+    DynamicArray(size_t size) : size_(size), data_(new int[size]()) {}
+
+    ~DynamicArray() noexcept { delete[] data_; }
+
+    // Copy Constructor
+    DynamicArray(const DynamicArray& other) 
+        : size_(other.size_), data_(other.size_ ? new int[other.size_]() : nullptr) {
+        std::copy(other.data_, other.data_ + other.size_, data_);
     }
 
-    template <typename... Args>
-    T* acquire(Args&&... args) {
-        if (free_list_.empty()) throw std::bad_alloc();
-        T* ptr = free_list_.back();
-        free_list_.pop_back();
-        return new (ptr) T(std::forward<Args>(args)...); // Placement new
+    // Move Constructor
+    DynamicArray(DynamicArray&& other) noexcept 
+        : size_(std::exchange(other.size_, 0)), data_(std::exchange(other.data_, nullptr)) {}
+
+    // Unified Assignment Operator (Passed by Value -> Copy constructed or Move constructed)
+    DynamicArray& operator=(DynamicArray other) noexcept {
+        swap(*this, other);
+        return *this;
     }
 
-    void release(T* ptr) {
-        ptr->~T(); // Explicit destructor
-        free_list_.push_back(ptr);
+    friend void swap(DynamicArray& first, DynamicArray& second) noexcept {
+        using std::swap;
+        swap(first.size_, second.size_);
+        swap(first.data_, second.data_);
     }
 };
 ```
 
-### Pimpl Idiom & `std::unique_ptr`
-Hide private implementation details inside `.cpp` translation units to improve compilation firewalls and maintain binary ABI compatibility:
-- **Rule**: The destructor of the outer class MUST be declared in the header file and defined in the `.cpp` file where the `Impl` type is complete. Otherwise, `std::unique_ptr<Impl>` fails static assertions inside `default_delete`.
+---
+
+## 4. Special Member Functions & The Rules of Ownership
+
+```
+                            RESOURCE MANAGEMENT RULES
+                                        |
+                   Does your class directly manage a raw resource?
+                                  /            \
+                                 /              \
+                               YES               NO
+                               /                  \
+                    +--------------------+    +--------------------+
+                    | RULE OF FIVE /     |    |   RULE OF ZERO     |
+                    | RULE OF THREE      |    | (Default / Best)   |
+                    +--------------------+    +--------------------+
+                    | Explicitly declare:|    | Use smart pointers |
+                    | 1. Destructor      |    | & STL containers.  |
+                    | 2. Copy Ctor       |    | Declare ZERO       |
+                    | 3. Copy Assign     |    | special member     |
+                    | 4. Move Ctor       |    | functions.         |
+                    | 5. Move Assign     |    +--------------------+
+                    +--------------------+
+```
 
 ---
 
-## 6. Memory Leak Detection Tooling
+## 5. Smart Pointers: Internal Mechanics & Control Blocks
 
-1. **AddressSanitizer (ASan / LSan)**: Fast runtime instrumentation compiled via `-fsanitize=address`. Intercepts `malloc`/`free` to detect out-of-bounds access, use-after-free, and leaks.
-2. **Valgrind (Memcheck)**: Dynamic binary instrumentation tool. Runs uncompiled binaries inside a CPU simulator to track memory accesses and uninitialized reads (slower than ASan).
-3. **Dr. Memory / MSVC CRT Debug Heap**: Windows/MSVC built-in memory leak tracking (`_CrtDumpMemoryLeaks()`).
+### 5.1 `std::unique_ptr<T, Deleter>`
 
----
+- **Memory Overhead**: Exactly `sizeof(T*)` (8 bytes) when using stateless deleters (e.g., default `std::default_delete<T>`) via Empty Base Optimization (EBO) / `[[no_unique_address]]`.
+- **Custom Deleters**:
+  - Stateless functor: `sizeof(unique_ptr) == 8` bytes.
+  - Function pointer: `sizeof(unique_ptr) == 16` bytes (stores pointer to object + pointer to function).
+- **Array Specialization**: `std::unique_ptr<T[]>` automatically invokes `delete[]` and provides `operator[]`.
 
-## 7. Deep Analysis of Question Bank Gotchas & Code Scenarios
+### 5.2 `std::shared_ptr<T>` & Control Block Architecture
 
-### Code Gotcha 1: Early Return Leak
+A `std::shared_ptr` consists of **two raw 64-bit pointers** (16 bytes total):
+1. Pointer to the managed object (`T*`).
+2. Pointer to the reference-counted **Control Block**.
+
+```
+std::shared_ptr<Widget> (16 Bytes)
++-------------------+-------------------+
+|  T* ptr           | ControlBlock* cb  |
++---------|---------+---------|---------+
+          |                   |
+          v                   v
+   +--------------+    +-----------------------------------------------+
+   | Widget Data  |    | CONTROL BLOCK                                 |
+   |              |    |  - std::atomic<long> strong_ref_count (Use)   |
+   |              |    |  - std::atomic<long> weak_ref_count   (Refs)  |
+   |              |    |  - Custom Deleter (Type-Erased)               |
+   |              |    |  - Custom Allocator (Type-Erased)             |
+   |              |    |  - [Optional] Inlined Widget (if make_shared) |
+   +--------------+    +-----------------------------------------------+
+```
+
+#### `std::make_shared` vs `std::shared_ptr<T>(new T)`
+
+```
+std::shared_ptr<T>(new T) -> 2 SEPARATE HEAP ALLOCATIONS:
+  [ Heap Block 1: T Data (e.g., 32B) ]  <--->  [ Heap Block 2: Control Block (48B) ]
+
+std::make_shared<T>() -> 1 SINGLE COMBINED HEAP ALLOCATION (Cache-Friendly):
+  +-----------------------------------+------------------------------------+
+  | Control Block Header (16-24B)     | Inlined T Object Data (e.g., 32B)  |
+  +-----------------------------------+------------------------------------+
+  <---------------------- Single 64-Byte Cache Line ---------------------->
+```
+
+**Tradeoffs of `std::make_shared`**:
+- **Pros**: Single allocation (faster, less heap fragmentation, zero memory overhead between blocks, cache friendly).
+- **Cons / Caveats**:
+  1. Cannot specify custom deleters.
+  2. **Deferred Memory Deallocation**: The memory block holding `T` cannot be freed until `weak_ref_count` drops to 0, because `T` and the control block share a single continuous heap buffer! (Although `~T()` runs when `strong_ref_count == 0`, the raw memory remains allocated until all `weak_ptr`s expire).
+
+### 5.3 `std::weak_ptr<T>` & Breaking Circular Reference Cycles
+
+```
+Circular Reference Leak (strong_ref = 2 -> Never reaches 0):
+  [ Node A (shared_ptr) ] --------points to-------> [ Node B (shared_ptr) ]
+         ^                                                 |
+         +-------------------points to---------------------+
+
+Breaking Cycle with std::weak_ptr:
+  [ Node A (shared_ptr) ] --------points to-------> [ Node B (shared_ptr) ]
+         ^                                                 |
+         +..............weak_ptr (no strong ref)...........+
+```
+
+To access the object from a `std::weak_ptr<T>`:
 ```cpp
-void process(const std::string& filename) {
-    FILE* f = fopen(filename.c_str(), "r");
-    if (hasError()) return; // Early return LEAKS file descriptor 'f'!
-    fclose(f);
+if (auto shared = weak_node.lock()) {
+    shared->execute(); // Safe: strong ref count atomically incremented
+} else {
+    // Target object has already been destroyed
 }
-// FIX: Use std::unique_ptr with custom fclose deleter.
 ```
 
-### Code Gotcha 2: Mismatched Delete on Array
+### 5.4 `std::enable_shared_from_this<T>`
+
+Enables an object managed by a `shared_ptr` to safely generate additional `shared_ptr` instances from its `this` pointer:
+
 ```cpp
-class ResourceManager {
-    int* data;
+class Worker : public std::enable_shared_from_this<Worker> {
 public:
-    ResourceManager(int n) : data(new int[n]) {}
-    ~ResourceManager() { delete data; } // BUG: Must use delete[] data! UB!
+    void register_with_manager(Manager& mgr) {
+        // Safe: Reuses the existing control block!
+        mgr.add_worker(shared_from_this()); 
+    }
 };
+
+// FATAL TRAP: Calling shared_from_this() in a constructor
+Worker::Worker() {
+    // UB / throws std::bad_weak_ptr! The control block is only initialized
+    // AFTER the constructor finishes when the owning shared_ptr takes ownership!
+}
 ```
 
-### Code Gotcha 3: Multiple Control Blocks from Raw Pointer
-```cpp
-std::shared_ptr<int> sp1(new int(42));
-std::shared_ptr<int> sp2(sp1.get()); 
-// BUG: Two distinct control blocks created for the SAME raw pointer!
-// When sp1 and sp2 go out of scope, double free occurs (UB)!
+---
+
+## 6. Custom Memory Allocators: Arenas & Pools
+
+### 6.1 Monotonic Arena (Bump-Pointer Allocator)
+
+```
++-------------------------------------------------------------------------------+
+| MONOTONIC ARENA (Fixed Buffer: 64 KB)                                         |
+|                                                                               |
+| [ Object 1 (32B) ] [ Object 2 (64B) ] [ Object 3 (128B) ] ... [ FREE SPACE ] |
+|                                                                 ^             |
+|                                                                 | offset_ptr  |
++-------------------------------------------------------------------------------+
 ```
 
-### Code Gotcha 4: Function Parameter Ordering Exception Leak (Pre-C++17)
-```cpp
-void f(std::shared_ptr<Widget> sp, int priority) {}
-f(std::shared_ptr<Widget>(new Widget), computePriority());
-// BUG (Pre-C++17): Evaluation order may be:
-// 1. new Widget
-// 2. computePriority() -> throws exception!
-// 3. std::shared_ptr constructor (never reached -> Widget memory leaked!)
-// FIX: Use std::make_shared<Widget>()
-```
+- **Allocation**: Pointer arithmetic (`offset_ptr += aligned_size`). Complexity: **$O(1)$** ($<1\text{ ns}$).
+- **Deallocation**: Global reset (`offset_ptr = 0`). Individual elements are not freed. Ideal for per-frame or per-request workloads.
 
-### Code Gotcha 5: Un-virtual Base Class Destructor Slicing
-```cpp
-class Base { public: ~Base() {} }; // Missing virtual!
-class Derived : public Base { std::vector<int> data; };
-Base* b = new Derived();
-delete b; // BUG: Invokes Base::~Base() only! Derived destructor & data vector memory LEAKED!
-```
+---
+
+## 7. Memory Corruption Pitfalls & Sanitizer Diagnostics
+
+| Memory Bug | Root Cause | Detection Tool |
+|---|---|---|
+| **Use-After-Free (UAF)** | Accessing pointer after `delete`/`free`. | AddressSanitizer (`-fsanitize=address`) |
+| **Double Free** | Calling `delete` twice on same pointer. | AddressSanitizer |
+| **Buffer Overflow (Stack/Heap)** | Writing past allocated boundary. | AddressSanitizer (Redzones) |
+| **Memory Leak** | Losing pointer without calling `delete`. | LeakSanitizer (`ASAN_OPTIONS=detect_leaks=1`) |
+| **Uninitialized Read** | Reading variable before write. | MemorySanitizer (`-fsanitize=memory`) |
+| **Data Race** | Concurrent unsynchronized read/write. | ThreadSanitizer (`-fsanitize=thread`) |

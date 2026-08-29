@@ -1,89 +1,73 @@
-# Theory & Mechanics: Error Handling Strategies & std::expected
+# Error Handling Strategies & Modern Error Models — Deep Theory & Mechanics
 
-## 1. The Error Handling Paradigm Matrix
-
-C++ offers three primary error handling mechanisms, each suited for specific architectural requirements:
-
-| Dimension | Exceptions (`try/catch/throw`) | Error Codes (`std::error_code`) | Monadic (`std::expected<T, E>`) |
-|---|---|---|---|
-| **Happy Path Cost** | **Zero CPU Overhead** ($0$ instructions) | `if (err)` branching check (~1 cycle) | `if (exp)` status check (~1 cycle) |
-| **Sad Path (Error) Cost**| **High** (Stack unwinding, `.eh_frame`) | **Zero** (Returns integer code) | **Zero** (Returns tagged union payload) |
-| **Memory Allocation** | May allocate heap object | Zero | Zero (In-place tagged storage) |
-| **Interface Explicit** | Implicit (Can be forgotten) | Explicit (Requires return check) | **Explicit & Enforced** |
-| **Primary Domain** | Application business logic | System / POSIX APIs | HFT, Embedded, Monadic Chains |
+An exhaustive guide to C++ error handling paradigms: Exceptions, Error Codes (`std::error_code`), Optional Values (`std::optional`), and Modern Functional Expected Monads (`std::expected` / `Result<T, E>`).
 
 ---
 
-## 2. Monadic Error Handling: `std::expected<T, E>` (C++23)
+## 1. Error Handling Taxonomy & Engineering Tradeoffs
 
-Introduced in C++23, `std::expected<T, E>` is a vocabulary type containing either an expected value `T` or an unexpected error `E` stored in a contiguous, non-allocating tagged union.
+| Error Strategy | Best Use Case | Performance Characteristics | Cons / Limitations |
+|---|---|---|---|
+| **Exceptions (`throw/catch`)** | Truly exceptional conditions (I/O failures, bad alloc, invariant violations). | **Zero cost on happy path**; very high latency ($1-10\mu\text{s}$) on throw path. | Non-deterministic latency (unusable in hard real-time / HFT hot paths); hidden control flow. |
+| **`std::error_code` (System)** | OS/System API errors (networking, filesystem). | Very low overhead (returns integer + category pointer). | Verbose; requires manual propagating and error code mapping. |
+| **`std::optional<T>`** | Expected absence of value (cache miss, key not found). | Inlined value + boolean flag; zero heap allocation. | Carries no diagnostic information explaining *why* the operation failed. |
+| **`std::expected<T, E>` (C++23)**| Expected domain failures (validation, parsing, business logic). | **Deterministic, zero-overhead value semantics**; inlined storage. | Requires C++23 (or custom monad). |
 
-```
-std::expected<T, E> Memory Layout:
-┌───────────────────────────────────────┬────────────┐
-│ Storage (Union of T value and E error)│ Tag (bool) │
-└───────────────────────────────────────┴────────────┘
-```
+---
 
-### Monadic Chaining Operations:
-- `.and_then(func)`: Invokes `func` (which returns another `std::expected`) if value is present.
-- `.transform(func)`: Applies `func` to value `T` and wraps the result in `std::expected`.
-- `.or_else(func)`: Handles the error `E` if present.
-- `.value_or(default_val)`: Returns `T` or fallback `default_val`.
+## 2. Modern Functional Error Handling: `std::expected` (C++23)
+
+`std::expected<T, E>` holds either a valid value `T` or an unexpected error `E`:
 
 ```cpp
 #include <expected>
 #include <string>
-#include <iostream>
 
-enum class MathError { DivisionByZero, NegativeLogarithm };
+enum class ParseError { EmptyInput, InvalidDigit, Overflow };
 
-std::expected<double, MathError> divide(double a, double b) {
-    if (b == 0.0) return std::unexpected(MathError::DivisionByZero);
-    return a / b;
+std::expected<int, ParseError> parse_integer(std::string_view str) {
+    if (str.empty()) return std::unexpected(ParseError::EmptyInput);
+    int result = 0;
+    for (char c : str) {
+        if (c < '0' || c > '9') return std::unexpected(ParseError::InvalidDigit);
+        result = result * 10 + (c - '0');
+    }
+    return result;
 }
+```
 
-std::expected<double, MathError> log_safe(double val) {
-    if (val <= 0.0) return std::unexpected(MathError::NegativeLogarithm);
-    return std::log(val);
-}
+### 2.1 Monadic Composition (`and_then`, `transform`, `or_else`)
+Eliminates nested `if-else` boilerplate by chaining operations:
 
-// Monadic Pipeline Chaining
-std::expected<double, MathError> compute(double a, double b) {
-    return divide(a, b).and_then(log_safe);
+```cpp
+auto process_input(std::string_view raw) {
+    return parse_integer(raw)
+        .and_then([](int id) -> std::expected<User, ParseError> {
+            return fetch_user(id); // Returns expected<User, ParseError>
+        })
+        .transform([](const User& u) {
+            return u.email; // Transforms User to string
+        });
 }
 ```
 
 ---
 
-## 3. Custom System Error Categories (`std::error_code`)
-
-`std::error_code` encapsulates an integer error value and a reference to a singleton `std::error_category` to achieve non-allocating polymorphic error matching across ABI boundaries.
+## 3. Pre-C++23 Custom `Result<T, E>` Implementation
 
 ```cpp
-#include <system_error>
-#include <string>
-
-enum class NetworkError { Success = 0, ConnectionReset, Timeout };
-
-class NetworkErrorCategory : public std::error_category {
+template <typename T, typename E>
+class Result {
+    std::variant<T, E> storage_;
 public:
-    const char* name() const noexcept override { return "NetworkError"; }
-    std::string message(int ev) const override {
-        switch (static_cast<NetworkError>(ev)) {
-            case NetworkError::ConnectionReset: return "Connection reset by peer";
-            case NetworkError::Timeout: return "Socket timeout";
-            default: return "Success";
-        }
-    }
+    Result(T val) : storage_(std::in_place_type<T>, std::move(val)) {}
+    Result(std::unexpected<E> err) : storage_(std::in_place_type<E>, std::move(err.value())) {}
+
+    [[nodiscard]] bool has_value() const noexcept { return std::holds_alternative<T>(storage_); }
+    explicit operator bool() const noexcept { return has_value(); }
+
+    [[nodiscard]] T& value() { return std::get<T>(storage_); }
+    [[nodiscard]] const T& value() const { return std::get<T>(storage_); }
+    [[nodiscard]] const E& error() const { return std::get<E>(storage_); }
 };
-
-const NetworkErrorCategory& network_category() {
-    static NetworkErrorCategory instance;
-    return instance;
-}
-
-std::error_code make_error_code(NetworkError e) {
-    return {static_cast<int>(e), network_category()};
-}
 ```

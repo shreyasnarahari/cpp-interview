@@ -1,202 +1,211 @@
-# Theory & Mechanics: Move Semantics & Value Categories
+# Move Semantics & Value Categories — Deep Theory & Mechanics
 
-## 1. Formal Value Categories Taxonomy
+An exhaustive, low-level reference on C++11/C++17/C++20 value categories, rvalue references, universal/forwarding references, reference collapsing rules, perfect forwarding, `std::move` vs `std::forward` assembly mechanics, copy elision (RVO/NRVO), and `noexcept` reallocation invariants.
 
-Every expression in C++ is characterized by two independent properties:
-1. **Has Identity**: The program holds a memory address (`&expr` is valid) to identify the object.
-2. **Can be Moved From**: The object can be bound to an rvalue reference (`T&&`) and its resources transferred.
+---
+
+## 1. The C++ Value Category Taxonomy (C++11 to C++23)
+
+In C++03, expressions were simply "lvalues" or "rvalues". In modern C++ (C++11 onwards), every expression is characterized by **two independent fundamental properties**:
+1. **Has Identity**: Does the program have an identifiable memory address for the object?
+2. **Can Be Moved From**: Can the resources of the object be safely transferred/pilfered?
 
 ```
-                  Expressions (All C++ Expressions)
-                             /         \
-                            /           \
-                           /             \
-                  glvalue                 rvalue
-                (has identity)         (can be moved)
-                 /          \         /          \
-                /            \       /            \
-           lvalue             xvalue             prvalue
-       (has identity,     (has identity,      (no identity,
-       cannot move)        can move)           can move)
+                               EXPRESSIONS
+                             /             \
+                            /               \
+            [HAS IDENTITY] /                 \ [CAN BE MOVED]
+                          /                   \
+                         v                     v
+                 +---------------+     +---------------+
+                 |    glvalue    |     |    rvalue     |
+                 | (Generalized) |     |  (Right-Value)|
+                 +---------------+     +---------------+
+                    /         \           /         \
+                   /           \         /           \
+                  v             v       v             v
+          +---------------+  +---------------+  +---------------+
+          |    lvalue     |  |    xvalue     |  |    prvalue    |
+          | (Left-Value)  |  |  (eXpiring)   |  | (Pure Rvalue) |
+          +---------------+  +---------------+  +---------------+
+          [Has Identity]     [Has Identity]     [No Identity]
+          [Cannot Move]      [Can Be Moved]     [Can Be Moved]
 ```
 
-### Complete Breakdown of Categories:
+### 1.1 Category Definitions & Concrete Examples
 
-| Category | Identity? | Movable? | Definition & Examples |
-|---|---|---|---|
-| **`lvalue`** | **Yes** | No | Functions, variables (`int x`), named rvalue refs (`std::string&& s`), string literals (`"hello"`). |
-| **`prvalue`** | No | **Yes** | Literals (`42`, `3.14`), temporary objects (`Widget()`), lambda expressions, arithmetic expressions (`a + b`). |
-| **`xvalue`** | **Yes** | **Yes** | Expiring values: Result of `std::move(x)`, member access of an rvalue (`Widget().data`). |
-| **`glvalue`** | **Yes** | — | Generalized lvalue: Union of `lvalue` and `xvalue`. |
-| **`rvalue`** | — | **Yes** | Union of `prvalue` and `xvalue`. Expressions that can bind to `const T&` or `T&&`. |
+| Category | Definition | Concrete Examples |
+|---|---|---|
+| **lvalue** | Has identity; cannot be moved implicitly. | Named variables (`x`, `str`), function calls returning lvalue reference (`arr[i]`, `++x`), string literals (`"hello"`). |
+| **prvalue** | Pure rvalue; computes a value that has no identity until materialized. | Literals (`42`, `3.14`), non-reference return values (`f()`), arithmetic results (`a + b`), lambdas (`[](){}`). |
+| **xvalue** | eXpiring value; has identity but its lifetime is ending and its resources can be pilfered. | Cast to rvalue reference (`static_cast<T&&>(x)`, `std::move(x)`), member access on rvalue (`std::move(p).member`). |
+| **glvalue** | Generalized lvalue (`lvalue \cup xvalue`). | Any expression with an identifiable memory address. |
+| **rvalue** | Moveable value (`prvalue \cup xvalue`). | Any expression that can bind to an rvalue reference (`T&&`). |
 
-### CRITICAL TRAP: Named Rvalue References are Lvalues!
+---
+
+## 2. Forwarding References & Reference Collapsing
+
+### 2.1 Universal (Forwarding) References
+A reference `T&&` is a **Forwarding Reference** if and only if it involves type deduction:
+1. Function template parameter: `template <typename T> void f(T&& param);`
+2. Auto deduction: `auto&& var = expr;`
+
+*Note: In `template <typename T> class Vector { void push_back(T&& x); };`, `T&&` is a regular **rvalue reference**, NOT a forwarding reference, because `T` was already deduced when the class was instantiated!*
+
+### 2.2 The 4 Reference Collapsing Rules
+When template deduction attempts to create a "reference to a reference", C++ applies **Reference Collapsing**:
+
+$$\& + \& \implies \&$$
+$$\& + \&\& \implies \&$$
+$$\&\& + \& \implies \&$$
+$$\&\& + \&\& \implies \&\&$$
+
+**Golden Rule**: If either reference is an lvalue reference (`&`), the result collapses to an **lvalue reference (`&`)**. It collapses to an rvalue reference (`&&`) **only if both** are rvalue references!
+
 ```cpp
-void process(std::string&& s) {
-    // 's' has type 'rvalue reference to string', BUT 's' has a name!
-    // Therefore, the expression 's' is an LVALUE!
-    std::string local1 = s;            // COPY constructor called!
-    std::string local2 = std::move(s); // MOVE constructor called!
-}
+template <typename T>
+void wrapper(T&& arg);
+
+int x = 10;
+wrapper(x);  // x is lvalue -> T deduced as `int&`  -> `int& &&` collapses to `int&`
+wrapper(10); // 10 is rvalue -> T deduced as `int`   -> `int&&` is `int&&`
 ```
 
 ---
 
-## 2. Under the Hood: What `std::move` Actually Does
+## 3. `std::move` vs `std::forward`: Assembly & Implementation
 
-`std::move` **does NOT move anything**, generate machine instructions, or touch object bytes at runtime! It is purely an **unconditional compile-time static cast** to an rvalue reference (`T&&` / `xvalue`).
+Neither `std::move` nor `std::forward` executes any CPU instructions at runtime! They are purely **compile-time static casts**.
 
-### Implementation of `std::move`:
+### 3.1 Custom Implementation of `std::move`
+Unconditionally casts any expression into an rvalue (`xvalue`):
+
 ```cpp
 template <typename T>
-constexpr std::remove_reference_t<T>&& move(T&& arg) noexcept {
+[[nodiscard]] constexpr std::remove_reference_t<T>&& custom_move(T&& arg) noexcept {
     return static_cast<std::remove_reference_t<T>&&>(arg);
 }
 ```
 
-### Generated Assembly:
-In optimized assembly (`-O2` / `-O3`), `std::move` evaporates entirely into zero machine instructions ($0$ cycles).
-
----
-
-## 3. Moved-From State Semantics & `noexcept` Vector Growth
-
-### Moved-From State Specification
-According to the C++ Standard Library, a moved-from object must be left in a **valid but unspecified state**:
-- **Valid**: Destructor can execute safely; member functions without preconditions (like `.clear()` or `operator=`) work cleanly.
-- **Unspecified**: The exact value stored inside the object is implementation-dependent (usually null pointers or 0 sizes).
-
-### Why Move Constructors MUST be Marked `noexcept`
-`std::vector` growth (`push_back` / `reallocate`) requires the **Strong Exception Guarantee**:
-1. When a vector reallocates its internal buffer, it transfers existing elements to the new buffer.
-2. If it moves elements using move constructors, and element 5's move constructor **throws an exception**, the vector cannot roll back (elements 0..4 are already moved/modified!).
-3. To maintain the Strong Guarantee, `std::vector` uses `std::move_if_noexcept<T>`:
-   - If `T` has a `noexcept` move constructor $\rightarrow$ **Uses Move Constructor**.
-   - If `T` lacks `noexcept` (or is copy-only) $\rightarrow$ **Falls back to Copy Constructor** (slower!).
+### 3.2 Custom Implementation of `std::forward`
+Conditionally casts an expression to an rvalue **only if** the original template argument was passed as an rvalue:
 
 ```cpp
-struct Element {
-    Element(Element&&) noexcept; // CRITICAL: Enables O(1) vector reallocations!
-};
-```
-
----
-
-## 4. Perfect Forwarding & `std::forward`
-
-### Forwarding References (Universal References)
-A syntax `T&&` is a **Forwarding Reference** if and only if:
-1. `T` is a **deduced template parameter** of the function being called.
-2. The type is written exactly as `T&&` without `const` or `volatile` qualifiers.
-
-```cpp
+// 1. Forwarding lvalues as lvalues or rvalues
 template <typename T>
-void f(T&& arg); // Forwarding reference (deduced)
-
-void g(Widget&& arg); // Rvalue reference (concrete type, NOT forwarding reference!)
-
-template <typename T>
-void h(const T&& arg); // Rvalue reference (has const, NOT forwarding reference!)
-```
-
-### Reference Collapsing Rules Matrix
-When binding arguments to a forwarding reference `T&&`, the compiler applies **Reference Collapsing**:
-
-| Argument Passed | Deduced `T` | Parameter `T&&` Expands To | Collapses To |
-|---|---|---|---|
-| **Lvalue** `Widget w; f(w)` | `Widget&` | `Widget& &&` | **`Widget&` (lvalue ref)** |
-| **Rvalue** `f(Widget())` | `Widget` | `Widget&&` | **`Widget&&` (rvalue ref)** |
-
-Reference Collapsing Rules:
-- `&` + `&` $\rightarrow$ `&`
-- `&` + `&&` $\rightarrow$ `&`
-- `&&` + `&` $\rightarrow$ `&`
-- `&&` + `&&` $\rightarrow$ `&&`
-
-### `std::forward` Implementation from Scratch
-`std::forward<T>(arg)` performs a **conditional cast**: preserves lvalue arguments as lvalues, and rvalue arguments as rvalues.
-
-```cpp
-template <typename T>
-constexpr T&& forward(std::remove_reference_t<T>& param) noexcept {
-    return static_cast<T&&>(param);
+[[nodiscard]] constexpr T&& custom_forward(std::remove_reference_t<T>& arg) noexcept {
+    return static_cast<T&&>(arg);
 }
 
+// 2. Forwarding rvalues (prevents forwarding temporary as lvalue)
 template <typename T>
-constexpr T&& forward(std::remove_reference_t<T>&& param) noexcept {
+[[nodiscard]] constexpr T&& custom_forward(std::remove_reference_t<T>&& arg) noexcept {
     static_assert(!std::is_lvalue_reference_v<T>, "Cannot forward rvalue as lvalue");
-    return static_cast<T&&>(param);
-}
-```
-
-```cpp
-// Factory pattern utilizing Perfect Forwarding
-template <typename T, typename... Args>
-std::unique_ptr<T> make_unique_custom(Args&&... args) {
-    return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+    return static_cast<T&&>(arg);
 }
 ```
 
 ---
 
-## 5. Copy Elision, RVO & NRVO Performance Traps
+## 4. Return Value Optimization (RVO) & Copy Elision
 
-### 1. Guaranteed Copy Elision (C++17)
-In C++17, when a function returns a **prvalue** (temporary object), copy elision is mandatory by specification. The compiler constructs the object **directly inside the caller's stack frame allocation**, completely eliminating copy/move constructors.
+### 4.1 Unnamed RVO (URVO) — Mandatory in C++17
+When returning a temporary (prvalue), C++17 guarantees **zero copy and zero move constructions**! The object is constructed directly into the caller's stack frame storage.
 
 ```cpp
-Widget createWidget() {
-    return Widget(); // C++17 Guaranteed Copy Elision -> 0 copies, 0 moves!
+Widget create_widget() {
+    return Widget(42); // Guaranteed Zero-Copy / Zero-Move in C++17!
 }
-Widget w = createWidget(); // Constructed in-place inside 'w'
+Widget w = create_widget(); // Constructed directly in w's memory location!
 ```
 
-### 2. Named Return Value Optimization (NRVO)
-NRVO applies when returning a named local variable. It is a compiler optimization (heuristic):
+### 4.2 Named Return Value Optimization (NRVO)
+When returning a named local variable:
+
 ```cpp
-Widget createNamed() {
-    Widget w;
-    return w; // NRVO: Compiler constructs 'w' directly in caller's memory space
+Widget create_widget() {
+    Widget w(42);
+    w.modify();
+    return w; // NRVO: Compiler constructs 'w' directly in caller's return slot
 }
 ```
 
-### 3. THE ANTI-PATTERN: Returning `std::move(local)`
-Calling `std::move` on a local variable being returned is an performance **anti-pattern**!
+### 4.3 The "Pessimizing `std::move`" Anti-Pattern
+Calling `return std::move(w);` **prevents RVO/NRVO**! It forces the compiler to treat `w` as an xvalue, turning a zero-overhead elision into a move construction:
 
 ```cpp
-// BAD / ANTI-PATTERN:
-Widget badCreate() {
+Widget get() {
     Widget w;
-    return std::move(w); // DISABLES NRVO! Forces a move constructor call instead of 0-cost elision!
-}
-
-// GOOD:
-Widget goodCreate() {
-    Widget w;
-    return w; // Enables NRVO! If NRVO fails, language automatically implicitly moves 'w'!
+    return std::move(w); // BAD! Disables NRVO elision; forces move construction!
 }
 ```
 
 ---
 
-## 6. Code Scenarios & Interview Gotchas
+## 5. `noexcept` on Move Operations & `std::vector` Invariant
 
-### Scenario 1: `std::unique_ptr` Return
-```cpp
-std::unique_ptr<Widget> create() {
-    auto w = std::make_unique<Widget>();
-    return std::move(w); // PESSIMIZATION! Remove std::move for optimal NRVO!
-}
-```
+When `std::vector` reallocates its internal buffer to grow capacity:
+- It must preserve the **Strong Exception Guarantee** (if copying/moving throws, the original vector elements must remain intact).
+- If `T` has a **non-`noexcept` move constructor**, moving an element halfway through reallocation might throw an exception, corrupting the original vector!
+- Therefore, `std::vector` uses `std::move_if_noexcept`:
+  - If `is_nothrow_move_constructible_v<T> == true` $\implies$ **Fast Move ($O(1)$ pointer transfer)**.
+  - If `is_nothrow_move_constructible_v<T> == false` $\implies$ **Slow Deep Copy ($O(N)$ memory allocations)**!
 
-### Scenario 2: Copy vs Move in Constructor Initializer Lists
 ```cpp
-class Employee {
-    std::string name_;
+class HeavyPayload {
+    char* data;
+    size_t size;
 public:
-    // Takes by value, moves into member variable
-    Employee(std::string name) : name_(std::move(name)) {}
+    // ALWAYS mark move constructor and move assignment NOEXCEPT!
+    HeavyPayload(HeavyPayload&& other) noexcept 
+        : data(std::exchange(other.data, nullptr)), size(std::exchange(other.size, 0)) {}
+
+    HeavyPayload& operator=(HeavyPayload&& other) noexcept {
+        if (this != &other) {
+            delete[] data;
+            data = std::exchange(other.data, nullptr);
+            size = std::exchange(other.size, 0);
+        }
+        return *this;
+    }
 };
 ```
-- **If passed rvalue (`Employee("Alice")`)**: 1 move to parameter + 1 move to `name_` = **2 moves, 0 copies**.
-- **If passed lvalue (`Employee(s)`)**: 1 copy to parameter + 1 move to `name_` = **1 copy, 1 move**.
+
+---
+
+## 6. Moved-From State Invariants
+
+According to the ISO C++ Standard (§ [lib.types.movedfrom]):
+- A moved-from object must be left in a **"valid but unspecified state"**.
+- Invariants:
+  1. It can be safely destroyed (`~T()`).
+  2. It can be assigned to (`operator=`).
+  3. Precondition-free queries can be called (`.empty()`, `.size() == 0`).
+  4. Accessing elements without checking bounds is undefined behavior.
+
+---
+
+## 7. Member Function Reference Qualifiers
+
+Member functions can be overloaded based on whether the calling object is an lvalue (`&`) or an rvalue (`&&`):
+
+```cpp
+class DataStore {
+    std::vector<std::string> cache_;
+public:
+    // Called when *this is an lvalue: returns const reference (avoids copy)
+    const std::vector<std::string>& get_data() const & {
+        return cache_;
+    }
+
+    // Called when *this is an rvalue (temporary): MOVES internal buffer directly!
+    std::vector<std::string> get_data() && {
+        return std::move(cache_);
+    }
+};
+
+DataStore ds;
+auto a = ds.get_data();           // Calls `&` version -> Copies cache_
+auto b = DataStore().get_data();  // Calls `&&` version -> MOVES cache_ (Zero Copy!)
+```

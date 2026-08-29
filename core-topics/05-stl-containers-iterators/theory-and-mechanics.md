@@ -1,188 +1,143 @@
-# Theory & Mechanics: STL Containers & Iterators
+# STL Containers & Iterators — Deep Theory & Mechanics
 
-## 1. Internal Data Structures & Memory Layouts
-
-```
-1. std::vector<T> Layout (Contiguous Memory):
-   ┌───────────┬───────────┬───────────┬───────────┬───────────────────────┐
-   │ Element 0 │ Element 1 │ Element 2 │ Element 3 │ Unallocated Storage   │
-   └───────────┴───────────┴───────────┴───────────┴───────────────────────┘
-   ^                       ^                       ^
-   T* start                T* finish               T* end_of_storage
-
-2. std::deque<T> Layout (Chunked Array Map):
-   Block Map (Array of Pointers):
-   ┌────────┬────────┬────────┬────────┐
-   │ Block0 │ Block1 │ Block2 │ Block3 │
-   └───│────┴───│────┴────────┴────────┘
-       │        └─────────> ┌──────────┬──────────┬──────────┐ (Fixed-size Buffer)
-       └──────────────────> ┌──────────┬──────────┬──────────┐
-
-3. std::unordered_map<K, V> Layout (Separate Chaining):
-   Bucket Array:
-   ┌───┐    ┌─────────────────┐    ┌─────────────────┐
-   │ 0 │───>│ Node(K1,V1) ptr ├───>│ Node(K4,V4) ptr │───> nullptr
-   ├───┤    └─────────────────┘    └─────────────────┘
-   │ 1 │───> nullptr
-   └───┘
-```
-
-### Breakdown of Container Internals:
-
-| Container | Internal Structure | Search | Insert (Front/Back) | Memory Locality |
-|---|---|---|---|---|
-| `std::vector` | Contiguous array | $O(N)$ / $O(\log N)$ sorted | Back $O(1)$ amortized, Front $O(N)$ | **Optimal** (L1 Cache line prefetch) |
-| `std::deque` | Central map of fixed-size chunks | $O(N)$ | Front $O(1)$, Back $O(1)$ | Good (per chunk buffer) |
-| `std::list` | Doubly-linked list nodes | $O(N)$ | Front $O(1)$, Back $O(1)$ | **Poor** (pointer chasing per node) |
-| `std::map` | Red-Black Tree (Self-balancing BST) | $O(\log N)$ | $O(\log N)$ | Moderate (node pointer allocations) |
-| `std::unordered_map` | Bucket array + linked list chains | $O(1)$ avg, $O(N)$ worst | $O(1)$ avg, $O(N)$ worst | Moderate |
+An exhaustive, low-level guide to C++ Standard Template Library (STL) container internal physical layouts, growth algorithms, node architectures, hash table bucket mechanics, iterator invalidation rules, cache locality analysis, and custom iterator implementations.
 
 ---
 
-## 2. `std::vector` Growth Factor & Amortized $O(1)$ Proof
+## 1. Sequence Containers: Physical Architecture & Memory Models
 
-### Growth Factor ($\gamma$)
-When `size() == capacity()`, `push_back` allocates a new memory block of size $\gamma \times \text{capacity}$:
-- **GCC `libstdc++` & LLVM `libc++`**: $\gamma = 2.0$ (Doubles capacity: 1, 2, 4, 8, 16, 32...).
-- **MSVC STL**: $\gamma = 1.5$ (Golden ratio approximation: reduces memory fragmentation by allowing freed older blocks to be reused).
+### 1.1 `std::vector<T>`: Contiguous Array Buffer
 
-### Amortized $O(1)$ Complexity Proof
-Consider inserting $N$ elements into an initially empty vector with growth factor $\gamma = 2$:
-- Allocations occur at sizes $1, 2, 4, 8, \dots, 2^k$.
-- Total copy operations for $N$ elements: $1 + 2 + 4 + 8 + \dots + N = 2N - 1$.
-- Total cost across $N$ insertions = $N \text{ (regular inserts)} + 2N \text{ (reallocations)} = 3N$.
-- Average cost per insertion = $\frac{3N}{N} = O(1)$ **amortized constant time**.
+```
+std::vector<T> (24 Bytes on 64-bit platforms):
++--------------------+--------------------+--------------------+
+| T* start_          | T* finish_ (Size)  | T* end_of_storage_ |
++---------|----------+---------|----------+---------|----------+
+          |                    |                    |
+          v                    v                    v
+Heap:    [Elem 0][Elem 1]...[Elem N-1]             [Unused Capacity]
+         <------- size() ------------>
+         <----------------- capacity() -------------------->
+```
+
+- **Growth Factor**:
+  - GCC / Clang (`libstdc++`, `libc++`): **$2.0\times$** multiplier.
+  - MSVC: **$1.5\times$** multiplier (theoretically allows reusing previously freed heap memory blocks!).
+- **Amortized $O(1)$ Complexity Proof**:
+  - Inserting $N$ elements requires doubling at sizes $1, 2, 4, 8, \dots, N$.
+  - Total copied elements: $1 + 2 + 4 + \dots + N = 2N - 1$.
+  - Amortized cost per insertion: $\frac{2N - 1}{N} \approx 2 = O(1)$!
+- **`reserve(N)` vs `resize(N)`**:
+  - `reserve(N)`: Allocates raw capacity for at least $N$ elements without calling constructors. `size()` is unchanged.
+  - `resize(N)`: Changes `size()` to $N$, default-constructing new elements if $N > \text{size()}$, or destroying trailing elements if $N < \text{size()}$.
 
 ---
 
-## 3. Comprehensive Iterator & Reference Invalidation Matrix
+### 1.2 `std::deque<T>`: Map of Fixed-Size Chunks
 
-This table is one of the most heavily tested areas in C++ technical rounds:
+`std::deque` (Double-Ended Queue) avoids the massive reallocation copy cost of `std::vector` by allocating fixed-size contiguous memory blocks (typically 512 bytes each) indexed by a central pointer map.
 
-| Container | Operation | Iterators Invalidated | References / Pointers Invalidated |
+```
+std::deque Central Map (Array of Pointers):
++--------+--------+--------+--------+--------+
+| Block0 | Block1 | Block2 | Block3 | Block4 |
++---|----+---|----+---|----+--------+--------+
+    |        |        |
+    v        v        v
+  [512B]   [512B]   [512B] (Fixed Contiguous Chunks)
+```
+
+- **Invariants**:
+  - $O(1)$ insertions/deletions at **both front and back**.
+  - **Zero element reallocation**: Adding elements never copies or moves existing elements (only the central map pointer array may reallocate!).
+  - **Random access**: $O(1)$ indexing via arithmetic: `chunk_idx = i / CHUNK_SIZE`, `elem_idx = i % CHUNK_SIZE`.
+
+---
+
+### 1.3 `std::list<T>` & `std::forward_list<T>`: Node-Based Doubly/Singly Linked Lists
+
+```
+std::list Node Layout:
++-------------------+-------------------+-------------------+
+| Node* prev (8B)   | Node* next (8B)   | T data (e.g. 4B)  | + 4B Padding
++-------------------+-------------------+-------------------+
+<----------------------- 24 Bytes Total -------------------->
+```
+
+- **Overhead**: 16 bytes of pointer metadata per element + heap chunk allocator header (8–16 bytes). For an `int` (4B), memory overhead is **$>600\%$**!
+- **Cache Locality Penalty**: Each node is allocated independently on the heap, causing CPU L1/L2 cache misses on every traversal step ("pointer chasing"). In benchmarks, `std::vector` is typically **$10\times - 50\times$ faster** than `std::list` even for random insertions!
+
+---
+
+## 2. Associative & Hash Containers
+
+### 2.1 `std::map<K, V>` & `std::set<K>`: Red-Black Self-Balancing Trees
+
+```
+Red-Black Tree Node (32-40 Bytes per element):
++----------------+----------------+----------------+----------------+---------+
+| Node* parent   | Node* left     | Node* right    | Color (1 Byte) | K key   |
++----------------+----------------+----------------+----------------+---------+
+```
+
+- **Invariants**: Search, Insertion, Deletion all guaranteed **$O(\log N)$**.
+- **Iterator Stability**: Inserting or deleting a node never invalidates iterators to other nodes.
+- **Transparent Comparators (`std::less<>`)**:
+  - Allows searching with heterogeneous types without allocating temporaries (e.g., searching `std::map<std::string, int>` using `std::string_view` or `const char*`).
+
+---
+
+### 2.2 `std::unordered_map<K, V>`: Bucket Array with Separate Chaining
+
+```
+Bucket Array (Array of Node Pointers):
+[Bucket 0] -> [Node (Hash=0, Key="AAPL", Val=150)] -> [Node (Hash=0, Key="GOOG", Val=2800)]
+[Bucket 1] -> nullptr
+[Bucket 2] -> [Node (Hash=2, Key="MSFT", Val=300)]
+```
+
+- **Load Factor**: $\text{load\_factor} = \frac{\text{size()}}{\text{bucket\_count()}}$. Default `max_load_factor` is $1.0$.
+- **Rehashing**: When `load_factor > max_load_factor`, the bucket array doubles in size, and all elements are re-distributed. Complexity: $O(N)$.
+- **Worst-Case Trap**: Hash collision attacks or poor hash functions degrade lookup complexity from average $O(1)$ to worst-case $O(N)$!
+
+---
+
+## 3. The Master Iterator Invalidation Matrix
+
+| Container | Operation | Iterator Invalidation Rule | Pointer / Reference Invalidation |
 |---|---|---|---|
-| **`std::vector`** | `push_back` / `insert` (with realloc) | **ALL** | **ALL** |
-| | `push_back` / `insert` (no realloc) | Insertion point to `end()` | Insertion point to `end()` |
-| | `erase` | Erased element to `end()` | Erased element to `end()` |
-| **`std::deque`** | `push_front` / `push_back` | **ALL** | **NONE** (Element references remain valid!) |
-| | `insert` / `erase` (in middle) | **ALL** | **ALL** |
-| **`std::list`** | `insert` / `push_front` / `push_back` | **NONE** | **NONE** |
-| | `erase` | Only erased elements | Only erased elements |
-| **`std::map` / `set`** | `insert` / `emplace` | **NONE** | **NONE** |
-| | `erase` | Only erased elements | Only erased elements |
-| **`std::unordered_map`** | `insert` (if `rehash` occurs) | **ALL** | **NONE** (Nodes remain in place!) |
-| | `insert` (no rehash) | **NONE** | **NONE** |
-| | `erase` | Only erased elements | Only erased elements |
+| **`std::vector`** | `push_back` / `insert` (Capacity Reallocation) | **ALL iterators invalidated!** | **ALL pointers/references invalidated!** |
+| | `push_back` / `insert` (No Reallocation) | Iterators at or after insertion point invalidated. | Pointers/references remain VALID. |
+| | `erase` / `pop_back` | Iterators at or after erasure point invalidated. | Pointers/references at or after erasure invalidated. |
+| **`std::deque`** | Insertion at Front or Back | **ALL iterators invalidated!** | **Pointers/references remain VALID!** |
+| | Insertion in Middle | ALL iterators invalidated. | ALL pointers/references invalidated. |
+| | Erase at Front or Back | Only erased iterator invalidated. | Only erased pointer/ref invalidated. |
+| **`std::list`** | `insert` / `push_front` / `push_back` | **No iterators invalidated!** | **No pointers/references invalidated!** |
+| | `erase` | Only erased iterator invalidated. | Only erased pointer/ref invalidated. |
+| **`std::map` / `set`** | `insert` / `emplace` | **No iterators invalidated!** | **No pointers/references invalidated!** |
+| | `erase` | Only erased iterator invalidated. | Only erased pointer/ref invalidated. |
+| **`std::unordered_map`**| `insert` (Triggers Rehash) | **ALL iterators invalidated!** | **Pointers/references remain VALID!** |
+| | `insert` (No Rehash) | No iterators invalidated. | No pointers/references invalidated. |
+| | `erase` | Only erased iterator invalidated. | Only erased pointer/ref invalidated. |
 
 ---
 
-## 4. Operational Mechanics & Best Practices
-
-### 1. `push_back` vs `emplace_back`
-- **`push_back(const T&)` / `push_back(T&&)`**: Requires a constructed object (or temporary), which is then passed to copy or move constructor into vector storage.
-- **`emplace_back(Args&&...)`**: Forwards arguments directly into placement `new` at the destination memory slot inside the vector, **constructing the object in-place** and bypassing temporary object creation!
-
-### 2. `reserve()` vs `resize()`
-- **`reserve(n)`**: Allocates memory capacity for at least `n` elements. Does NOT construct any objects. `size()` remains unchanged; `capacity()` becomes $\ge n$.
-- **`resize(n)`**: Changes `size()` to `n`. Default-constructs new elements if $n > \text{size()}$, or destroys trailing elements if $n < \text{size()}$.
-
-### 3. Remove-Erase Idiom
-`std::remove_if` does not delete elements from a vector (it cannot alter the container's `size()`). Instead, it shifts non-matching elements forward and returns a logical end iterator:
+## 4. Modern Erase-Remove Idiom (C++20 Uniform `std::erase`)
 
 ```cpp
-// Erase all odd numbers from vector
-std::vector<int> v = {1, 2, 3, 4, 5, 6};
+// C++98 / C++11 / C++17 Idiom:
+auto it = std::remove_if(vec.begin(), vec.end(), [](int x) { return x % 2 == 0; });
+vec.erase(it, vec.end());
 
-// std::remove_if shifts elements -> {2, 4, 6, ?, ?, ?} and returns iterator to 4th pos
-v.erase(std::remove_if(v.begin(), v.end(), [](int x) { return x % 2 != 0; }), 
-        v.end());
-```
-
-### 4. `std::span<T>` (C++20 Zero-Copy View)
-`std::span<T>` is a non-owning lightweight view over a contiguous sequence of objects (like a pointer + size). It accepts `std::vector`, `std::array`, or C-style arrays without triggering allocations or copies.
-
----
-
-## 5. Code Traps & Gotcha Scenarios
-
-### Code Trap 1: Erasing Inside a Loop (`vector` Iterator Invalidation)
-```cpp
-// BUG: Erasing from vector invalidates current iterator!
-std::vector<int> v = {1, 2, 3, 4, 5};
-for (auto it = v.begin(); it != v.end(); ++it) {
-    if (*it % 2 == 0) v.erase(it); // INVALIDATES 'it'! ++it is UB!
-}
-
-// CORRECT SOLUTION: Use the return value of erase()
-for (auto it = v.begin(); it != v.end(); /* no ++it */) {
-    if (*it % 2 == 0) {
-        it = v.erase(it); // erase returns iterator to next valid element
-    } else {
-        ++it;
-    }
-}
-```
-
-### Code Trap 2: `std::map::operator[]` Implicit Insertion
-```cpp
-std::map<int, int> m;
-std::cout << m[5]; // Inserts key 5 with default-constructed value 0!
-std::cout << " size=" << m.size(); // PRINTS: 0 size=1
-// FIX: Use m.find(5) or m.contains(5) (C++20) for read-only lookups without insertion side-effects.
-```
-
-### Code Trap 3: Vector Reference Invalidation
-```cpp
-std::vector<int> v = {1, 2, 3};
-int& ref = v[0];
-v.push_back(4); // Reallocation occurs -> memory relocated!
-std::cout << ref; // UB: 'ref' is a dangling reference!
+// Modern C++20 Uniform Erase:
+std::erase_if(vec, [](int x) { return x % 2 == 0; });
 ```
 
 ---
 
-## 6. Implementation Pattern: Production-Grade LRU Cache
+## 5. Container Adapters & Heap Algorithms
 
-```cpp
-#include <unordered_map>
-#include <list>
-#include <utility>
-#include <stdexcept>
-
-template <typename Key, typename Value>
-class LRUCache {
-    size_t capacity_;
-    using Pair = std::pair<Key, Value>;
-    std::list<Pair> items_; // Most recently used at front
-    using ListIt = typename std::list<Pair>::iterator;
-    std::unordered_map<Key, ListIt> map_;
-
-public:
-    explicit LRUCache(size_t capacity) : capacity_(capacity) {}
-
-    Value get(const Key& key) {
-        auto it = map_.find(key);
-        if (it == map_.end()) throw std::out_of_range("Key not found");
-        // Move accessed item to front of list (O(1))
-        items_.splice(items_.begin(), items_, it->second);
-        return it->second->second;
-    }
-
-    void put(const Key& key, Value value) {
-        auto it = map_.find(key);
-        if (it != map_.end()) {
-            it->second->second = value;
-            items_.splice(items_.begin(), items_, it->second); // Move to front
-            return;
-        }
-        if (map_.size() >= capacity_) {
-            // Evict Least Recently Used (back of list)
-            auto lru_key = items_.back().first;
-            map_.erase(lru_key);
-            items_.pop_back();
-        }
-        items_.push_front({key, value});
-        map_[key] = items_.begin();
-    }
-};
-```
+`std::priority_queue` is backed by `std::vector` and operates via binary heap algorithms:
+- `std::make_heap(begin, end)`: Transforms array into max-heap in linear **$O(N)$** time.
+- `std::push_heap(begin, end)`: Sifts up the newly appended element in **$O(\log N)$**.
+- `std::pop_heap(begin, end)`: Swaps top element with the last element and sifts down in **$O(\log N)$**.
