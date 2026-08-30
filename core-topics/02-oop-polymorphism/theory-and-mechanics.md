@@ -314,17 +314,139 @@ if (p->__vptr == &DerivedA::vtable) {
 ## 3. Critical Traps & Anti-Patterns
 
 ### 3.1 Why Virtual Function Calls in Constructors/Destructors Do NOT Dispatch Dynamically
-During the execution of a `Base` class constructor, the `Derived` subobject has not yet been initialized!
-- To prevent undefined behavior, the compiler **sets the object's `__vptr` to `Base::VTable`** during `Base::Base()`.
-- Only when `Derived::Derived()` begins is the `__vptr` updated to `Derived::VTable`.
-- Calling a virtual function inside `Base::Base()` calls `Base`'s implementation, **never `Derived`'s**! If the function is pure virtual, it triggers `__cxa_pure_virtual` and crashes with `std::terminate`!
+
+#### 1. The Core Object Lifetime Safety Principle
+In C++, an object is constructed layer-by-layer from the base class down to the most-derived class (**Base-First Construction**), and destroyed in the exact reverse order (**Derived-First Destruction**):
 
 ```
-Constructor Execution Order:
-  1. Base constructor starts -> __vptr points to Base::VTable
-  2. Base constructor finishes
-  3. Derived constructor starts -> __vptr updated to Derived::VTable
+CONSTRUCTION TIMELINE:
+  [ 1. Allocate Raw Memory ] -> [ 2. Base::Base() ] ---------> [ 3. Derived::Derived() ]
+                                 (Derived members NOT yet        (Derived members now fully
+                                  initialized in memory!)         initialized & ready)
+
+DESTRUCTION TIMELINE:
+  [ 1. Derived::~Derived() ] -> [ 2. Base::~Base() ] ---------> [ 3. Free Raw Memory ]
+  (Derived members torn down;    (Only Base subobject remains)
+   Derived state no longer valid)
 ```
+
+**Why Dynamic Dispatch to Derived is Dangerous**:
+- During `Base::Base()`, the `Derived` class constructor has **not yet executed**. The derived class member variables (e.g. heap pointers, strings, file handles) are uninitialized garbage.
+- If C++ allowed dynamic dispatch to `Derived::virtual_func()` from `Base::Base()`, the derived implementation would attempt to access uninitialized members, causing immediate **Undefined Behavior, memory corruption, and crashes**.
+- Therefore, the ISO C++ Standard (§ [class.cdtor]) mandates: **During the execution of a constructor or destructor, the dynamic type of the object is that of the currently executing constructor/destructor class, NOT the most-derived class!**
+
+---
+
+#### 2. The Mechanics of `__vptr` Mutation Under the Hood
+To enforce this guarantee at the hardware level, the compiler actively mutates the object's `__vptr` during construction and destruction:
+
+```
+[ Step 1: Memory Allocated for Derived (e.g., 32 Bytes on heap) ]
+     |
+     v
+[ Step 2: Base::Base() begins ]
+     |  Compiler emits: mov QWORD PTR [rdi], OFFSET Base::vtable
+     |  --> `__vptr` points to Base::VTable!
+     |  --> Any virtual call resolves to Base::virtual_func()!
+     v
+[ Step 3: Base::Base() finishes ]
+     |
+     v
+[ Step 4: Derived::Derived() begins ]
+     |  Compiler emits: mov QWORD PTR [rdi], OFFSET Derived::vtable
+     |  --> `__vptr` is OVERWRITTEN to point to Derived::VTable!
+     |  --> Virtual calls now resolve to Derived::virtual_func()!
+```
+
+During destruction, the reverse occurs:
+1. `Derived::~Derived()` executes with `__vptr` pointing to `Derived::VTable`.
+2. When `Base::~Base()` begins, the compiler resets `__vptr` back to `Base::VTable`.
+
+---
+
+#### 3. What Actually Happens When a Virtual Function is Called in a Constructor?
+
+#### Scenario A: Defined Virtual Function Call
+```cpp
+class Base {
+public:
+    Base() { 
+        log(); // Resolves to Base::log(), NOT Derived::log()!
+    }
+    virtual void log() { std::cout << "Base Initialized\n"; }
+};
+
+class Derived : public Base {
+    std::string name_{"ProductionWorker"};
+public:
+    Derived() = default;
+    void log() override { std::cout << "Derived: " << name_ << "\n"; }
+};
+
+Derived d; // PRINTS: "Base Initialized" (Derived::log is completely ignored!)
+```
+
+#### Scenario B: Indirect Pure Virtual Function Call (The `__cxa_pure_virtual` Crash)
+If a base constructor calls a pure virtual function (`virtual void f() = 0;`), what happens?
+- **Direct Call (`f()` in `Base::Base()`)**: The compiler catches this at compile-time and emits a compilation error.
+- **Indirect Call (via a helper method)**: The compiler cannot catch this at compile-time:
+
+```cpp
+class Base {
+public:
+    Base() { 
+        init(); // Calls helper
+    }
+    void init() {
+        process(); // Calling pure virtual function while __vptr points to Base::VTable!
+    }
+    virtual void process() = 0;
+};
+
+class Derived : public Base {
+public:
+    void process() override { /* ... */ }
+};
+
+Derived d; // RUNTIME CRASH!
+```
+
+**The Crash Mechanics**:
+1. During `Base::Base()`, `__vptr` points to `Base::VTable`.
+2. Because `Base::process()` is pure virtual, `Base::VTable` puts a pointer to the standard runtime handler: **`__cxa_pure_virtual`** (on GCC/Clang) or **`_purecall`** (on MSVC).
+3. When `process()` is called, the CPU jumps to `__cxa_pure_virtual`.
+4. The handler prints `pure virtual method called` to `stderr` and immediately calls **`std::terminate()`**, aborting the program!
+
+---
+
+#### 4. Comparison with Other Languages (Java / C# vs C++)
+- **Java and C#**: Virtual calls in constructors **do dispatch dynamically** to the derived override. In Java/C#, this is widely recognized as a major design trap because the derived override executes while derived fields are still `null` or default-zero.
+- **C++**: Eliminates this trap by tying dynamic dispatch strictly to the lifetime phase of the object.
+
+---
+
+#### 5. Recommended Production Idiom: Two-Phase Initialization
+If you need polymorphic behavior during object initialization, use a **Two-Phase Initialization** pattern with a static factory method:
+
+```cpp
+class Service {
+protected:
+    Service() = default; // Protected constructor
+    virtual void post_construct() {} // Customization hook
+
+public:
+    virtual ~Service() = default;
+
+    template <typename Derived, typename... Args>
+    static std::shared_ptr<Derived> create(Args&&... args) {
+        auto obj = std::make_shared<Derived>(std::forward<Args>(args)...);
+        obj->post_construct(); // Safe: Object is fully constructed -> Dynamic dispatch works!
+        return obj;
+    }
+};
+```
+
+---
 
 ### 3.2 The Mandatory Virtual Destructor Rule
 If a class contains at least one `virtual` function, its destructor **must be declared `virtual`**!
