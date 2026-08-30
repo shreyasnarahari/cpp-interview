@@ -225,30 +225,44 @@ public:
 
 ---
 
-### 3. Critical Traps & Gotchas
+### 3. Critical Traps & Gotchas (The 4 Classic Pitfalls)
 
-#### Trap 1: Calling `shared_from_this()` Inside a Constructor
+#### Trap 1: Calling `shared_from_this()` Inside a Constructor or Destructor
 ```cpp
-class BadCtor : public std::enable_shared_from_this<BadCtor> {
+class BadWorker : public std::enable_shared_from_this<BadWorker> {
 public:
-    BadCtor() {
+    BadWorker() {
         // FATAL CRASH: Throws std::bad_weak_ptr!
+        auto self = shared_from_this(); 
+    }
+
+    ~BadWorker() {
+        // FATAL CRASH: Throws std::bad_weak_ptr (strong_count is already 0)!
         auto self = shared_from_this(); 
     }
 };
 ```
-- **Why it fails**: During constructor execution, the object is still being created. The owning `std::shared_ptr` has **not yet taken ownership**, so the internal `weak_this_` pointer is still uninitialized (empty)!
-- **The Solution (Factory Pattern)**: Keep constructors private and expose a `static create()` factory method:
+- **Why it fails**: 
+  - **In Constructor**: Base and derived constructors execute *before* the outer `std::shared_ptr` constructor finishes. The owning `shared_ptr` has not yet taken ownership of the raw pointer, so the internal `weak_this_` is completely uninitialized/empty!
+  - **In Destructor**: The object's `strong_ref_count` has already dropped to 0. `shared_from_this()` cannot resurrect a dying object and throws `std::bad_weak_ptr`.
+- **The Solution (Two-Phase Initialization + Static Factory Pattern)**:
+  - Make constructors `private` to prevent direct instantiation.
+  - Expose a `static std::shared_ptr<T> create()` method that constructs the `shared_ptr` and immediately calls an `init()` method where `shared_from_this()` is guaranteed safe:
 
 ```cpp
 class SafeWorker : public std::enable_shared_from_this<SafeWorker> {
 private:
-    SafeWorker() = default; // Private constructor
+    SafeWorker() = default; // Private constructor prevents invalid usage!
+
     void init() {
-        // Safe to call shared_from_this() here if called after shared_ptr creation!
+        // Safe: weak_this_ is fully initialized here!
+        auto self = shared_from_this();
+        registerWithEventBus(self);
     }
+
 public:
     static std::shared_ptr<SafeWorker> create() {
+        // Note: Using new here if private constructor blocks std::make_shared
         auto ptr = std::shared_ptr<SafeWorker>(new SafeWorker());
         ptr->init();
         return ptr;
@@ -256,8 +270,85 @@ public:
 };
 ```
 
-#### Trap 2: Stack-Allocated Objects
-Calling `shared_from_this()` on an object created on the stack (e.g. `Worker w; w.getPtr();`) throws **`std::bad_weak_ptr`** because no `std::shared_ptr` ever managed the object to initialize its internal `weak_this_`.
+---
+
+#### Trap 2: Stack or Static Allocated Objects (Non-Heap Lifetime)
+```cpp
+void process() {
+    SafeWorker worker;       // Stack allocation!
+    auto sp = worker.getPtr(); // CRASH! Throws std::bad_weak_ptr
+}
+```
+- **Why it fails**: `std::enable_shared_from_this` relies on an active `std::shared_ptr` having previously initialized its internal `weak_this_`. A stack-allocated or global `static` object is never owned by a `shared_ptr`, so its `weak_this_` remains permanently expired.
+- **The Solution**: Enforcing private constructors (as shown in Trap 1) prevents stack and static allocations at compile-time.
+
+---
+
+#### Trap 3: Multiple Inheritance Ambiguity (Multiple `enable_shared_from_this` Bases)
+```cpp
+// Base 1
+class NetworkNode : public std::enable_shared_from_this<NetworkNode> {};
+
+// Base 2
+class StorageNode : public std::enable_shared_from_this<StorageNode> {};
+
+// Derived: Multiple Inheritance
+class HybridNode : public NetworkNode, public StorageNode {
+public:
+    void test() {
+        // COMPILE ERROR: Call to 'shared_from_this' is ambiguous!
+        // Derived contains TWO distinct 'weak_this_' subobjects!
+        auto self = shared_from_this(); 
+    }
+};
+```
+- **Why it fails**: `HybridNode` inherits two separate instances of `enable_shared_from_this` (`enable_shared_from_this<NetworkNode>` and `enable_shared_from_this<StorageNode>`). When `std::make_shared<HybridNode>()` executes, the standard library cannot decide which `weak_this_` to initialize, leading to either compile-time ambiguity errors or silently broken initialization.
+- **The Solution**:
+  1. Only inherit `enable_shared_from_this` on a single common virtual root base class, OR
+  2. Inherit `enable_shared_from_this` **only on the final leaf class** (`HybridNode`), rather than on individual base classes:
+  ```cpp
+  class NetworkNode {}; // Clean interfaces
+  class StorageNode {};
+  class HybridNode : public NetworkNode, public StorageNode,
+                     public std::enable_shared_from_this<HybridNode> {
+      // Unambiguous single enable_shared_from_this!
+  };
+  ```
+
+---
+
+#### Trap 4: Async Callbacks & Event Listeners Creating Unintentional Lifetime Leaks
+```cpp
+class DataStreamer : public std::enable_shared_from_this<DataStreamer> {
+public:
+    void startListening(EventBus& bus) {
+        // DANGEROUS: Capturing shared_from_this() by value in long-lived lambda!
+        bus.onData([self = shared_from_this()](const Data& d) {
+            self->process(d);
+        });
+    }
+};
+```
+- **Why it fails**: Capturing `shared_from_this()` by copy inside a long-lived callback or global event bus increments the object's `strong_ref_count`. Even if the rest of your application destroys all references to `DataStreamer`, the `EventBus` **keeps the `DataStreamer` alive in memory forever**, causing a permanent memory leak!
+- **The Solution (C++17 `weak_from_this()`)**:
+  - Capture a `std::weak_ptr` instead using `weak_from_this()`.
+  - Inside the callback, call `.lock()`. If the object was destroyed elsewhere, `.lock()` returns `nullptr` and the callback gracefully exits:
+
+```cpp
+class DataStreamer : public std::enable_shared_from_this<DataStreamer> {
+public:
+    void startListening(EventBus& bus) {
+        // SAFE: Weak capture avoids keeping the object alive artificially
+        bus.onData([weak_self = weak_from_this()](const Data& d) {
+            if (auto self = weak_self.lock()) {
+                self->process(d); // Object is alive and safe to use!
+            } else {
+                // Object was destroyed -> Ignore callback or unsubscribe!
+            }
+        });
+    }
+};
+```
 
 ---
 
