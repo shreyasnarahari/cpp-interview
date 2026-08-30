@@ -140,7 +140,23 @@ public:
 };
 ```
 
-Key points: explicit constructor, delete copy, noexcept on move, null-check in destructor.
+#### Key Design Decisions & Mechanics:
+
+1. **Why `explicit` Constructor?**
+   - **Prevents Accidental Implicit Conversions**: Constructors callable with a single argument act as implicit type-conversion operators by default.
+   - Without `explicit`, a function `void process(FileHandle fh)` could be invoked passing a raw string: `process("data.txt")`. The compiler would silently construct a temporary `FileHandle`, perform disk I/O, execute `process`, and immediately close the file when the temporary destructs at the end of the statement. Marking the constructor `explicit` forces callers to write `FileHandle("data.txt")`, preventing hidden resource acquisition.
+
+2. **Why Delete Copy Operations (`= delete`)?**
+   - **Exclusive Resource Ownership**: A `FILE*` stream represents exclusive ownership of an OS file descriptor.
+   - If copying were permitted (the compiler-generated shallow copy), two `FileHandle` instances would hold the identical raw `FILE*`. When the first instance goes out of scope, its destructor calls `fclose(file_)`. When the second instance goes out of scope, it calls `fclose(file_)` on an already closed/invalidated pointer, causing a **Double Close Bug (Undefined Behavior)** and memory corruption if the OS has already reallocated that file descriptor number to another thread!
+
+3. **Why `noexcept` on Move Constructor & Move Assignment?**
+   - **Inherent Invariant**: Transferring ownership of a raw pointer is purely bitwise assignment (`file_ = other.file_`), which can never fail or throw an exception.
+   - **`std::vector` Reallocation (`std::move_if_noexcept`)**: When `std::vector<FileHandle>` grows and reallocates memory, it inspects `is_nothrow_move_constructible_v<T>`. If the move constructor is not marked `noexcept`, `std::vector` falls back to copying elements to maintain the Strong Exception Guarantee. Since copy operations are deleted, omitting `noexcept` causes `std::vector` operations to fail to compile!
+
+4. **Why Null-Check in Destructor (`if (file_) fclose(file_)`)?**
+   - **Moved-From State Safety**: When an object is moved (`std::move(fh)`), the source object's pointer is cleared to `nullptr` (`other.file_ = nullptr`).
+   - The moved-from object still resides on the stack, and its destructor `~FileHandle()` will execute when its scope exits. Passing `nullptr` to C standard library `std::fclose(NULL)` is **Undefined Behavior** (causes an immediate `SIGSEGV` on Linux/glibc). The null-check guarantees that moved-from instances destruct cleanly as a safe no-op.
 
 ---
 
