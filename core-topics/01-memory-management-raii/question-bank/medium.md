@@ -48,26 +48,100 @@ Downside of `make_shared`: the memory for the object is not freed until ALL `wea
 
 **Q3. When would you use `std::weak_ptr`?**
 
-A: Two main use cases:
+A: `std::weak_ptr` is a **non-owning observer** of an object managed by `std::shared_ptr`. It tracks the object by incrementing only the `weak_ref_count` in the shared control block, **without incrementing the `strong_ref_count`**.
 
-1. **Break circular references:**
+There are two critical architectural use cases:
+
+---
+
+### Use Case 1: Breaking Circular References (Cycle Memory Leak Prevention)
+
+#### The Problem with `shared_ptr` Reference Cycles:
+If two objects hold strong `shared_ptr` references to each other, their `strong_ref_count` will never drop to 0, causing a **permanent memory leak**:
+
+```
+CIRCULAR REFERENCE (MEMORY LEAK):
+  [ Node A (strong_count = 1) ] --------shared_ptr 'next'--------> [ Node B (strong_count = 1) ]
+               ^                                                               |
+               +-----------------------shared_ptr 'prev'-----------------------+
+
+When local variables go out of scope:
+  - Both nodes keep each other alive! Neither destructor is EVER called!
+```
+
+#### The Solution with `std::weak_ptr`:
+By replacing back-pointers with `std::weak_ptr`, back-references do **not** contribute to `strong_ref_count`:
+
+```
+CYCLE BROKEN WITH std::weak_ptr:
+  [ Node A (strong_count = 1) ] --------shared_ptr 'next'--------> [ Node B (strong_count = 1) ]
+               ^                                                               :
+               +.......................weak_ptr 'prev'.........................+
+                                    (Does NOT increment strong_count!)
+```
+
 ```cpp
 struct Node {
+    int value;
     std::shared_ptr<Node> next;
-    std::weak_ptr<Node> prev;  // weak — doesn't prevent destruction
+    std::weak_ptr<Node> prev; // Back-pointer is WEAK: avoids reference cycle!
+
+    ~Node() { std::cout << "Destroyed Node " << value << "\n"; }
+};
+
+void createList() {
+    auto a = std::make_shared<Node>(1);
+    auto b = std::make_shared<Node>(2);
+    a->next = b; // b's strong_count = 2 (owned by 'b' and 'a->next')
+    b->prev = a; // a's weak_count = 1, strong_count remains 1!
+} 
+// Scope ends:
+// 1. 'a' goes out of scope -> a's strong_count drops to 0 -> Node 1 is destroyed.
+// 2. Destructor of Node 1 destroys 'a->next' -> b's strong_count drops to 0 -> Node 2 is destroyed!
+// Clean, leak-free destruction!
+```
+
+**Common Examples**:
+- **Parent-Child Trees**: Parent owns Children via `std::vector<std::shared_ptr<Child>>`; Child points to Parent via `std::weak_ptr<Parent>`.
+- **Doubly Linked Lists** & **Graph Structures**.
+
+---
+
+### Use Case 2: Non-Owning Cache / Ephemeral Observers (Dangling Pointer Prevention)
+
+#### The Problem with Raw Pointers (`Widget*`):
+If an asynchronous worker, observer, or cache stores a raw pointer `Widget*` to an object owned elsewhere, and the owning scope deletes the object, the raw pointer becomes a **dangling pointer**. Dereferencing it causes a **Use-After-Free (UAF) Crash / Undefined Behavior**.
+
+#### The Problem with `std::shared_ptr<Widget>`:
+If the cache holds a `std::shared_ptr`, the object's `strong_ref_count` never reaches 0. The object is kept alive in memory forever, defeating the purpose of an ephemeral cache.
+
+#### How `std::weak_ptr` Solves This with Atomic `.lock()`:
+`std::weak_ptr::lock()` performs a thread-safe, atomic check-and-increment:
+1. If the object is still alive (`strong_count > 0`), it returns a valid `std::shared_ptr<T>`, guaranteeing the object **cannot be destroyed while your code is using it**.
+2. If the object has already been destroyed (`strong_count == 0`), it safely returns `nullptr`.
+
+```cpp
+class ImageCache {
+    std::unordered_map<std::string, std::weak_ptr<Image>> cache_;
+public:
+    std::shared_ptr<Image> getImage(const std::string& key) {
+        auto it = cache_.find(key);
+        if (it != cache_.end()) {
+            // Attempt to promote weak_ptr to shared_ptr
+            if (auto existing = it->second.lock()) {
+                return existing; // Cache hit: image is still in memory!
+            }
+        }
+
+        // Cache miss or expired: reload image from disk
+        auto newImage = std::make_shared<Image>(key);
+        cache_[key] = newImage; // Store weak reference (does not hold image in RAM)
+        return newImage;
+    }
 };
 ```
 
-2. **Non-owning observer** — check if an object still exists:
-```cpp
-std::weak_ptr<Widget> observer = someSharedPtr;
-// Later:
-if (auto sp = observer.lock()) {
-    sp->doSomething();  // object still alive
-} else {
-    // object was destroyed
-}
-```
+---
 
 ---
 
