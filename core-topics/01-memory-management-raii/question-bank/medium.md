@@ -429,7 +429,78 @@ public:
 };
 ```
 
-Key details: explicit constructor (prevent implicit conversion), noexcept on moves, self-assignment check.
+#### Detailed Mechanics & Step-by-Step Code Walkthrough:
+
+```
+UniquePtr<T> Physical Layout (Exactly 8 Bytes on 64-bit platforms):
++------------------------------------+
+| T* ptr_ (Raw Pointer to Heap Data) |
++------------------------------------+
+<-- Identical memory footprint and runtime cost to a raw C pointer -->
+```
+
+1. **Storage & Zero-Cost Abstraction (`T* ptr_ = nullptr;`)**:
+   - `UniquePtr` wraps a single raw pointer.
+   - It contains **no control block, no reference counts, and no virtual table pointer (VPtr)**.
+   - `sizeof(UniquePtr<T>) == sizeof(T*)` (8 bytes). Compilers optimize methods like `get()`, `operator*`, and `operator->` into direct register moves, producing **zero runtime overhead** compared to manual raw pointer code.
+
+2. **Explicit Constructor (`explicit UniquePtr(T* p = nullptr)`)**:
+   - **Default Argument (`= nullptr`)**: Enables default construction (`UniquePtr<Widget> p;`) without requiring the caller to explicitly write `nullptr`.
+   - **`explicit` Keyword**: Disallows dangerous implicit conversions from raw pointers. Without `explicit`, a function `void process(UniquePtr<int> p)` could be invoked with `process(new int(10))`, creating an implicit temporary smart pointer that would delete the memory immediately after the call.
+
+3. **Destructor (`~UniquePtr() { delete ptr_; }`)**:
+   - Automatically executes when the `UniquePtr` leaves its lexical scope, regardless of whether the scope exits normally, via `return`, or due to an unhandled exception (Stack Unwinding).
+   - If `ptr_` is `nullptr` (e.g., if default-constructed or moved-from), `delete nullptr` is guaranteed by the C++ standard to be a safe no-op.
+
+4. **Non-Copyable Invariant (`= delete`)**:
+   ```cpp
+   UniquePtr(const UniquePtr&) = delete;
+   UniquePtr& operator=(const UniquePtr&) = delete;
+   ```
+   - Enforces **Exclusive Ownership**. If copying were allowed, multiple smart pointers would point to the same memory block, causing a **Double Free Bug** upon destruction.
+
+5. **Move Constructor (`UniquePtr(UniquePtr&& other) noexcept`)**:
+   ```cpp
+   UniquePtr(UniquePtr&& other) noexcept : ptr_(other.ptr_) {
+       other.ptr_ = nullptr; // Steal ownership, nullify source
+   }
+   ```
+   - Transfers ownership from `other` to `*this` in $O(1)$ time by copying the pointer and setting the source pointer to `nullptr`.
+   - **`noexcept` Guarantee**: Essential for STL container integration. When `std::vector<UniquePtr<T>>` reallocates capacity, it uses `std::move_if_noexcept`. If `noexcept` is omitted, the vector would fail to compile because copy operations are deleted.
+
+6. **Move Assignment Operator (`operator=(UniquePtr&& other) noexcept`)**:
+   ```cpp
+   UniquePtr& operator=(UniquePtr&& other) noexcept {
+       if (this != &other) { // 1. Guard against self-move assignment (p = std::move(p))
+           delete ptr_;      // 2. Clean up currently managed resource
+           ptr_ = other.ptr_;// 3. Steal resource from donor
+           other.ptr_ = nullptr; // 4. Leave donor in valid empty state
+       }
+       return *this;
+   }
+   ```
+   - Performs a self-assignment check (`if (this != &other)`). Without this check, `p = std::move(p)` would delete its own memory before copying!
+
+7. **Modifiers: `release()` vs `reset()`**:
+   - **`T* release()`**:
+     ```cpp
+     T* tmp = ptr_;
+     ptr_ = nullptr;
+     return tmp;
+     ```
+     Relinquishes ownership without destroying the object. Returns the raw pointer to the caller, who assumes responsibility for eventual deallocation.
+   - **`void reset(T* p = nullptr)`**:
+     ```cpp
+     delete ptr_; // Deletes old object
+     ptr_ = p;    // Replaces with new object (or nullptr)
+     ```
+     Destroys the current object and assumes ownership of a new pointer `p`.
+
+8. **Pointer Operators & Contextual Boolean Conversion**:
+   - `operator*()` and `operator->()` provide standard pointer dereference syntax.
+   - **`explicit operator bool() const`**:
+     - Allows testing validity in conditional statements: `if (ptr) { ... }` or `if (!ptr) { ... }`.
+     - The `explicit` specifier is critical: it prevents accidental implicit conversions to arithmetic types (e.g. `ptr + 5` or `ptr == 1` are rejected at compile time).
 
 ---
 
