@@ -81,40 +81,106 @@ The CPU executes the following steps under the hood:
 
 ### 1.2 Multiple Inheritance & Multiple VPtrs
 
-In multiple inheritance, a derived class inherits multiple independent subobjects, resulting in **multiple distinct VPtrs** and **Thunk pointer adjustments**:
+In multiple inheritance, a derived class inherits from two or more independent base classes. Because each base class has its own memory layout and virtual functions, the derived class must maintain **multiple distinct subobjects**, resulting in **multiple VPtrs** and **Thunk pointer adjustments**.
 
 ```
 Class Base1 { int b1; virtual void f1(); };
 Class Base2 { int b2; virtual void f2(); };
 Class MultiDerived : public Base1, public Base2 { int d; void f1() override; void f2() override; };
 
-MultiDerived Object Memory Layout (32 Bytes):
-+------------------------------------+ 0x00
-| Base1::__vptr (8 Bytes)            | ----------> VTable (for Base1 / Primary VTable)
-+------------------------------------+ 0x08        +------------------------------+
-| int b1 (4 Bytes)                   |             | offset-to-top: 0             |
-| [Padding: 4 Bytes]                 |             | RTTI for MultiDerived        |
-+------------------------------------+ 0x10        | &MultiDerived::f1()          |
-| Base2::__vptr (8 Bytes)            | ----+       +------------------------------+
+MultiDerived Object Memory Layout (32 Bytes on x86-64):
++------------------------------------+ 0x00  <-- MultiDerived* md & Base1* b1 point here
+| Base1::__vptr (8 Bytes)            | ----------> Primary VTable (for MultiDerived / Base1)
++------------------------------------+ 0x08        +---------------------------------------+
+| int b1 (4 Bytes)                   |             | offset-to-top: 0                      |
+| [Padding: 4 Bytes]                 |             | RTTI for MultiDerived                 |
++------------------------------------+ 0x10  <--   | &MultiDerived::f1()                   |
+| Base2::__vptr (8 Bytes)            | ----+       +---------------------------------------+
 +------------------------------------+ 0x18|
-| int b2 (4 Bytes)                   |     +-----> VTable (for Base2 / Secondary VTable)
-| int d  (4 Bytes)                   |             +------------------------------+
-+------------------------------------+ 0x20        | offset-to-top: -16           |
-                                                   | RTTI for MultiDerived        |
-                                                   | Non-virtual Thunk for f2()   |
-                                                   +------------------------------+
+| int b2 (4 Bytes)                   |     +-----> Secondary VTable (for Base2 in MultiDerived)
+| int d  (4 Bytes)                   |             +---------------------------------------+
++------------------------------------+ 0x20        | offset-to-top: -16                    |
+                                                   | RTTI for MultiDerived                 |
+                                                   | &non-virtual thunk to MultiDerived::f2|
+                                                   +---------------------------------------+
 ```
 
-#### What is a Non-Virtual Thunk?
-When a caller invokes `base2_ptr->f2()`:
-1. `base2_ptr` points to offset `+0x10` within `MultiDerived`.
-2. `MultiDerived::f2()` expects the `%rdi` register (the `this` pointer) to point to the **start of `MultiDerived`** (`offset 0x00`).
-3. The secondary VTable points to an assembly **Thunk**:
-   ```assembly
-   __non_virtual_thunk_to_MultiDerived::f2():
-       sub rdi, 16       # Adjust `this` pointer from Base2 subobject back to MultiDerived
-       jmp MultiDerived::f2() # Jump directly to the actual member function
-   ```
+---
+
+#### 1. Why Does Multiple Inheritance Require Multiple VPtrs?
+1. **Physical Memory Layout Constraint**:
+   - `MultiDerived` contains a complete `Base1` subobject and a complete `Base2` subobject.
+   - `Base1` is placed at offset `0x00`. When you cast `MultiDerived* md` to `Base1* b1 = md;`, `b1` points to memory address `0x00`.
+   - `Base2` cannot also be at `0x00` (otherwise its members would overwrite `Base1`'s data!). It is placed at **offset `0x10` (+16 bytes)**.
+2. **Independent Polymorphic Interfaces**:
+   - When a caller has a `Base2* b2` pointer, the caller might not even know that the object is actually a `MultiDerived` instance!
+   - The caller expects to find a VPtr at `b2`'s address (`*(b2)` at offset `0x10`).
+   - Therefore, `Base2` **must have its own secondary `__vptr` located at offset `0x10`** pointing to a secondary VTable.
+
+---
+
+#### 2. The "Pointer Offset Mismatch" Problem
+Consider what happens when you invoke a virtual function through the secondary base pointer:
+
+```cpp
+MultiDerived* md = new MultiDerived();
+Base2* b2 = md; // Implicit pointer adjustment! b2 = (char*)md + 16
+b2->f2();       // Calling virtual function via secondary base pointer
+```
+
+- **The Caller's State**:
+  - The caller holds `b2` (which points to address `0x10`).
+  - To call `f2()`, the caller loads `Base2`'s VTable from `*(b2)` and passes `b2` (address `0x10`) in the `%rdi` register as the implicit `this` pointer (System V AMD64 ABI).
+- **The Callee's Expectation**:
+  - `MultiDerived::f2()` is a member function of `MultiDerived`.
+  - Inside `MultiDerived::f2()`, code accesses members like `this->d` (at offset `0x1C` relative to the *start* of `MultiDerived`) and `this->b1` (at offset `0x08`).
+  - `MultiDerived::f2()` expects the `%rdi` register (`this`) to point to the **start of `MultiDerived` (address `0x00`)**, NOT `0x10`!
+- **The Conflict**: If `MultiDerived::f2()` ran directly with `this = 0x10`, accessing `this->b1` (offset `+0x08`) would read `b2`'s padding, causing memory corruption!
+
+---
+
+#### 3. What is a Thunk?
+A **Thunk** (also called an *adjustment thunk* or *trampoline*) is a tiny, compiler-generated assembly shim function whose sole purpose is to **adjust the `this` pointer (`%rdi`) before jumping to the actual member function**.
+
+Instead of placing `&MultiDerived::f2()` directly inside `Base2`'s secondary VTable, the compiler places a pointer to the **Thunk**:
+
+```assembly
+# Compiler-generated Non-Virtual Thunk in assembly:
+__non_virtual_thunk_to_MultiDerived::f2():
+    sub rdi, 16                 # 1. Adjust `this` pointer: subtract 16 to move from Base2 (0x10) to MultiDerived (0x00)
+    jmp MultiDerived::f2()      # 2. Tail-call jump directly to the real member function!
+```
+
+---
+
+#### 4. Step-by-Step Execution Walkthrough of a Thunk Call:
+
+```
+[ Caller: b2->f2() ]
+       |
+       | 1. Dereferences `b2` (at 0x10) to fetch Base2::__vptr
+       | 2. Loads function pointer from Secondary VTable slot
+       | 3. Passes %rdi = 0x10 and calls function pointer
+       v
+[ Assembly Thunk: `__non_virtual_thunk_to_MultiDerived::f2()` ]
+       |
+       | 4. Executes `sub rdi, 16` -> %rdi is now 0x00 (True start of MultiDerived!)
+       | 5. Executes `jmp MultiDerived::f2()`
+       v
+[ Real Function: `MultiDerived::f2()` ]
+       |
+       | 6. Executes with correct `this = 0x00`. Reads `this->b1` and `this->d` safely!
+       v
+[ Normal Return back to Caller ]
+```
+
+---
+
+#### 5. Non-Virtual Thunk vs. Virtual Thunk
+- **Non-Virtual Thunk**: Used in standard multiple inheritance where the offset between the base subobject and the complete object is **constant and fixed at compile-time** (e.g. constant `-16`). The adjustment `sub rdi, 16` is hardcoded as a single instruction.
+- **Virtual Thunk**: Used in **Virtual Inheritance** where the offset to the virtual base subobject varies dynamically at runtime depending on what class is the most-derived object. A virtual thunk dynamically reads the offset from a `vcall-offset` entry in the VTable before adjusting `%rdi`.
+
+---
 
 ---
 
