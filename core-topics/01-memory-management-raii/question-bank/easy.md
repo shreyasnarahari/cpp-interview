@@ -201,6 +201,7 @@ A:
 // DatabaseHandle* db_open(const char* path);
 // void db_close(DatabaseHandle* handle);
 
+// Approach 1: Function Pointer with decltype
 auto db = std::unique_ptr<DatabaseHandle, decltype(&db_close)>(
     db_open("mydb.sqlite"),
     db_close
@@ -208,13 +209,57 @@ auto db = std::unique_ptr<DatabaseHandle, decltype(&db_close)>(
 // db_close is called automatically when db goes out of scope
 ```
 
-Or with a lambda:
+Or with a stateless struct functor (Optimal — **Zero Memory Overhead**):
 ```cpp
-auto db = std::unique_ptr<DatabaseHandle, void(*)(DatabaseHandle*)>(
-    db_open("mydb.sqlite"),
-    [](DatabaseHandle* h) { db_close(h); }
-);
+// Approach 2: Stateless Struct Deleter (Recommended Production Idiom)
+struct DbDeleter {
+    void operator()(DatabaseHandle* handle) const noexcept {
+        if (handle) db_close(handle);
+    }
+};
+
+using UniqueDbHandle = std::unique_ptr<DatabaseHandle, DbDeleter>;
+
+UniqueDbHandle db(db_open("mydb.sqlite")); 
+// No need to pass deleter instance in constructor! sizeof(db) is exactly 8 bytes!
 ```
+
+Or with a lambda (C++20):
+```cpp
+// Approach 3: Stateless Lambda Deleter
+auto db_deleter = [](DatabaseHandle* h) noexcept { if (h) db_close(h); };
+std::unique_ptr<DatabaseHandle, decltype(db_deleter)> db(db_open("mydb.sqlite"));
+```
+
+#### Detailed Syntax, Mechanics & Operational Breakdown:
+
+1. **The Two-Argument Template Signature: `std::unique_ptr<T, Deleter>`**
+   - Unlike raw pointers, `std::unique_ptr` accepts two template parameters:
+     1. `T`: The managed object type (`DatabaseHandle`).
+     2. `Deleter`: The callable type responsible for destroying the resource (defaults to `std::default_delete<T>`, which runs `delete ptr`).
+   - **Critical Architectural Difference from `std::shared_ptr`**: In `std::shared_ptr`, the deleter is *type-erased* into the runtime control block on the heap. In `std::unique_ptr`, the deleter type is **baked directly into the static C++ type** at compile-time, allowing the compiler to inline the destruction call completely.
+
+2. **Syntax Breakdown: `decltype(&db_close)` vs Struct Functor**
+   - `&db_close` extracts the memory address of the C function.
+   - `decltype(&db_close)` deduces the function pointer type: `void (*)(DatabaseHandle*)`.
+   - **Constructor Requirement**: When using a function pointer deleter, you **must pass the function pointer as the second constructor argument** (`db_close`), because function pointers cannot be default-constructed.
+   - **Memory Overhead Comparison**:
+     | Deleter Technique | `sizeof(unique_ptr)` | Why? |
+     |---|---|---|
+     | **Function Pointer (`decltype(&db_close)`)** | **16 Bytes** | Stores 8B raw handle pointer + 8B function pointer. |
+     | **Stateless Functor (`struct DbDeleter`)** | **8 Bytes** (Zero overhead!) | Exploits **Empty Base Optimization (EBO)** / `[[no_unique_address]]` to eliminate empty struct size. |
+     | **C++20 Stateless Lambda** | **8 Bytes** (Zero overhead!) | C++20 stateless lambdas are default-constructible and zero-sized. |
+
+3. **Destruction & Operational Lifecycle**
+   - **Destructor Invocation**: When `db` goes out of scope (or when `db.reset()` is called), `std::unique_ptr` checks `if (ptr != nullptr) get_deleter()(ptr);`.
+   - **Exception Safety**: If an exception is thrown anywhere after `db` is created, stack unwinding automatically calls `db_close`, preventing handle leaks without requiring `try/catch`.
+   - **Ownership Transfer**: Supports full move semantics:
+     ```cpp
+     UniqueDbHandle db2 = std::move(db); // Transfers ownership; db becomes nullptr
+     ```
+   - **Manual Early Release**:
+     - `db.reset()`: Explicitly closes the handle immediately and resets to `nullptr`.
+     - `DatabaseHandle* raw = db.release()`: Relinquishes ownership without closing the handle (caller becomes responsible for manual `db_close(raw)`).
 
 ---
 
