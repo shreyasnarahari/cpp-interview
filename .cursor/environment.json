@@ -1,0 +1,4 @@
+{
+  "name": "cpp-interview",
+  "install": "bash .cursor/install.sh"
+}
